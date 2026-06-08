@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>DM B2 exo — Évolution temporelle des descripteurs d'aromaticité</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- STIX Two : police serif scientifique standard (Computer Modern-like, support unicode math) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --serif: 'STIX Two Text', 'STIX2Text-Regular', 'Latin Modern Roman', 'Times New Roman', Times, serif;
+    --ui:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  body { font-family: var(--ui); }
+  .panel { background: #ffffff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .chip { transition: all 0.15s ease; }
+  .chip-active { box-shadow: 0 0 0 2px currentColor inset; }
+  .tbl-row:nth-child(odd) { background: #f8fafc; }
+  .desc-card { transition: all 0.1s ease; cursor: pointer; }
+  .desc-card:hover { background: #eff6ff; }
+  .desc-card-active { background: #dbeafe; border-color: #2563eb; }
+  /* Pour les labels de descripteurs (chips et tableau) — police math */
+  .math { font-family: var(--serif); font-style: italic; }
+  /* Modale */
+  .modal-bg { background: rgba(15, 23, 42, 0.55); }
+  /* Force la police serif dans le rendu Plotly exporté */
+  #plot text { font-family: var(--serif) !important; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+<div class="max-w-[1600px] mx-auto p-6 space-y-4">
+
+  <!-- En-tête : métadonnées -->
+  <header class="panel p-6">
+    <h1 class="text-2xl font-bold text-slate-800" style="font-family:var(--serif);">
+      Évolution des descripteurs d'aromaticité — Diels-Alder exo (B2)
+    </h1>
+    <div class="text-sm text-slate-600 mt-3 grid md:grid-cols-2 gap-x-8 gap-y-1.5">
+      <div><span class="font-semibold text-slate-700">Système :</span>
+           Nitrobenzène + 1,3-butadiène, voie exo</div>
+      <div><span class="font-semibold text-slate-700">Échantillonnage :</span>
+           44 frames × 3 motifs = <span class="font-mono">132 points</span></div>
+      <div><span class="font-semibold text-slate-700">Dynamique moléculaire :</span>
+           B3LYP/6-31G(d), NVE, T = 50 K, depuis le TS</div>
+      <div><span class="font-semibold text-slate-700">Pas MD :</span>
+           dt = 0.2 fs, snapshot tous les 10 pas (2 fs)</div>
+      <div><span class="font-semibold text-slate-700">Single-point électronique :</span>
+           wB97XD/6-311++G(d,p)</div>
+      <div><span class="font-semibold text-slate-700">Analyse aromaticité :</span>
+           AroX.v0.2.0 (HOMA + LDM)</div>
+    </div>
+    <div class="flex flex-wrap gap-3 mt-4 text-xs">
+      <span class="px-2.5 py-1 rounded bg-sky-100 text-sky-800 border border-sky-200">
+        Reverse : t &lt; 0 (vers réactifs)
+      </span>
+      <span class="px-2.5 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
+        TS : t = 0
+      </span>
+      <span class="px-2.5 py-1 rounded bg-rose-100 text-rose-800 border border-rose-200">
+        Forward : t &gt; 0 (vers produits)
+      </span>
+    </div>
+  </header>
+
+  <!-- Contrôles : motifs + descripteurs + options + export -->
+  <section class="panel p-5 space-y-4">
+    <div>
+      <div class="text-sm font-semibold text-slate-700 mb-2">
+        Motifs (cliquer pour activer/désactiver)
+      </div>
+      <div id="motif-chips" class="flex gap-2 flex-wrap"></div>
+    </div>
+
+    <div>
+      <div class="text-sm font-semibold text-slate-700 mb-2">
+        Descripteurs à afficher (un panneau empilé par descripteur)
+      </div>
+      <div id="descriptor-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2"></div>
+    </div>
+
+    <div class="flex items-center gap-4 pt-3 border-t border-slate-200 flex-wrap">
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="show-markers" checked class="rounded">
+        <span>Marqueurs visibles</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="show-ts-line" checked class="rounded">
+        <span>Ligne TS (t=0)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="show-zones" checked class="rounded">
+        <span>Zones colorées rev/TS/fwd</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="show-minor-grid" class="rounded">
+        <span>Grille mineure</span>
+      </label>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button id="btn-export-png"
+                class="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 shadow-sm">
+          Export PNG (×3, 300 dpi)
+        </button>
+        <button id="btn-export-svg"
+                class="text-sm px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm">
+          Export SVG vectoriel
+        </button>
+        <button id="btn-export-config"
+                class="text-sm px-3 py-1.5 rounded bg-slate-700 text-white hover:bg-slate-800 shadow-sm">
+          Export figure publication…
+        </button>
+        <button id="reset-btn"
+                class="text-sm px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300">
+          Réinitialiser
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Graphiques -->
+  <section class="panel p-3">
+    <div id="plot" style="width:100%; min-height:600px;"></div>
+  </section>
+
+  <!-- Tableau filtrable -->
+  <section class="panel p-5">
+    <div class="flex items-center gap-4 mb-3 flex-wrap">
+      <h2 class="text-lg font-semibold text-slate-700">Données brutes</h2>
+      <input type="search" id="tbl-search" placeholder="Filtre texte (motif, temps...)"
+             class="border rounded px-3 py-1 text-sm flex-1 min-w-[200px]">
+      <select id="tbl-motif-filter" class="border rounded px-2 py-1 text-sm">
+        <option value="">Tous motifs</option>
+      </select>
+      <label class="text-sm flex items-center gap-2">
+        <span>t min</span>
+        <input type="number" id="tbl-tmin" value="-200" step="10" class="border rounded px-2 py-1 w-20 text-sm">
+      </label>
+      <label class="text-sm flex items-center gap-2">
+        <span>t max</span>
+        <input type="number" id="tbl-tmax" value="200" step="10" class="border rounded px-2 py-1 w-20 text-sm">
+      </label>
+      <button id="tbl-export"
+              class="text-sm px-3 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200">
+        Export CSV
+      </button>
+    </div>
+    <div class="overflow-auto max-h-[400px] border rounded">
+      <table id="tbl" class="text-xs w-full">
+        <thead class="bg-slate-200 sticky top-0">
+          <tr id="tbl-head"></tr>
+        </thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+    </div>
+    <div class="text-xs text-slate-500 mt-2">
+      <span id="tbl-count"></span>
+    </div>
+  </section>
+
+  <footer class="text-xs text-slate-400 text-center pb-6 pt-2"
+          style="letter-spacing: 0.4em;">
+    ARIA NOROOZI
+  </footer>
+</div>
+
+<!-- Modale Export Figure -->
+<div id="export-modal" class="fixed inset-0 modal-bg hidden items-center justify-center z-50">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-[460px] max-w-[95vw]">
+    <h3 class="text-lg font-semibold text-slate-800 mb-4">Export figure publication</h3>
+    <div class="space-y-3 text-sm">
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Format</label>
+        <select id="exp-format" class="col-span-2 border rounded px-2 py-1">
+          <option value="png">PNG raster</option>
+          <option value="svg">SVG vectoriel</option>
+          <option value="jpeg">JPEG raster</option>
+          <option value="webp">WebP raster</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Unité</label>
+        <select id="exp-unit" class="col-span-2 border rounded px-2 py-1">
+          <option value="mm">mm</option>
+          <option value="in">inch</option>
+          <option value="px">pixel</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Largeur</label>
+        <input id="exp-width" type="number" value="180" step="1" class="col-span-2 border rounded px-2 py-1">
+      </div>
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Hauteur (par panneau)</label>
+        <input id="exp-height" type="number" value="70" step="1" class="col-span-2 border rounded px-2 py-1">
+      </div>
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Résolution (dpi)</label>
+        <input id="exp-dpi" type="number" value="300" step="50" class="col-span-2 border rounded px-2 py-1">
+      </div>
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <label>Nom de fichier</label>
+        <input id="exp-name" type="text" class="col-span-2 border rounded px-2 py-1">
+      </div>
+      <div class="text-xs text-slate-500 pt-1">
+        Astuce : pour un journal ACS / RSC, largeur 1 col = 84 mm, 2 col = 174 mm, hauteur ~ 70 mm/panneau.
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button id="exp-cancel" class="px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-sm">
+        Annuler
+      </button>
+      <button id="exp-go" class="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm">
+        Télécharger
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// =================== DONNÉES ===================
+const DATA = [{"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 0.0, "EN": 0.055044, "GEO": 0.280043, "HOMA": 0.664913, "HOMA_TOTAL": -18.089042, "LDM_OFF": 0.581117, "LDM_DIAG": 1.445559, "LDM_FROB": 1.557991, "LDM_RMSD": 0.259665, "LDM_CT_PCT": -11.506111, "Q_FROB": 0.350956, "Q_RMSD": 0.064075, "Q_G": 0.083973, "S_HOM": 0.360939, "S_HOM_G": 0.151302, "S_G": 0.194496, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 0.0, "EN": 10.843193, "GEO": 23.880607, "HOMA": -33.7238, "HOMA_TOTAL": -18.089042, "LDM_OFF": 0.903249, "LDM_DIAG": 1.40333, "LDM_FROB": 1.66889, "LDM_RMSD": 0.278148, "LDM_CT_PCT": -15.99, "Q_FROB": 0.417842, "Q_RMSD": 0.076287, "Q_G": 0.083973, "S_HOM": 0.264921, "S_HOM_G": 0.151302, "S_G": 0.194496, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 0.0, "EN": 3.976919, "GEO": 16.983641, "HOMA": -19.960561, "HOMA_TOTAL": -18.089042, "LDM_OFF": 1.002427, "LDM_DIAG": 1.7568, "LDM_FROB": 2.022673, "LDM_RMSD": 0.202267, "LDM_CT_PCT": -10.599833, "Q_FROB": 0.558498, "Q_RMSD": 0.058871, "Q_G": 0.083973, "S_HOM": 0.183217, "S_HOM_G": 0.151302, "S_G": 0.194496, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -2.0, "EN": 0.058004, "GEO": 0.280481, "HOMA": 0.661515, "HOMA_TOTAL": -18.47711, "LDM_OFF": 0.582616, "LDM_DIAG": 1.441381, "LDM_FROB": 1.554676, "LDM_RMSD": 0.259113, "LDM_CT_PCT": -11.452222, "Q_FROB": 0.352132, "Q_RMSD": 0.06429, "Q_G": 0.083902, "S_HOM": 0.360995, "S_HOM_G": 0.151437, "S_G": 0.194651, "step": 10, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -2.0, "EN": 10.843912, "GEO": 24.574003, "HOMA": -34.417915, "HOMA_TOTAL": -18.47711, "LDM_OFF": 0.906807, "LDM_DIAG": 1.405176, "LDM_FROB": 1.67237, "LDM_RMSD": 0.278728, "LDM_CT_PCT": -15.986111, "Q_FROB": 0.418658, "Q_RMSD": 0.076436, "Q_G": 0.083902, "S_HOM": 0.26388, "S_HOM_G": 0.151437, "S_G": 0.194651, "step": 10, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -2.0, "EN": 4.050443, "GEO": 17.345359, "HOMA": -20.395801, "HOMA_TOTAL": -18.47711, "LDM_OFF": 1.00657, "LDM_DIAG": 1.752191, "LDM_FROB": 2.020731, "LDM_RMSD": 0.202073, "LDM_CT_PCT": -10.560833, "Q_FROB": 0.560183, "Q_RMSD": 0.059048, "Q_G": 0.083902, "S_HOM": 0.182891, "S_HOM_G": 0.151437, "S_G": 0.194651, "step": 10, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -4.0, "EN": 0.069752, "GEO": 0.264248, "HOMA": 0.666001, "HOMA_TOTAL": -18.896918, "LDM_OFF": 0.58028, "LDM_DIAG": 1.442961, "LDM_FROB": 1.555269, "LDM_RMSD": 0.259212, "LDM_CT_PCT": -11.4725, "Q_FROB": 0.349069, "Q_RMSD": 0.063731, "Q_G": 0.083668, "S_HOM": 0.361247, "S_HOM_G": 0.15174, "S_G": 0.194934, "step": 20, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -4.0, "EN": 10.97523, "GEO": 25.21178, "HOMA": -35.187009, "HOMA_TOTAL": -18.896918, "LDM_OFF": 0.910514, "LDM_DIAG": 1.408119, "LDM_FROB": 1.676852, "LDM_RMSD": 0.279475, "LDM_CT_PCT": -16.013889, "Q_FROB": 0.419084, "Q_RMSD": 0.076514, "Q_G": 0.083668, "S_HOM": 0.262732, "S_HOM_G": 0.15174, "S_G": 0.194934, "step": 20, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -4.0, "EN": 4.178853, "GEO": 17.68176, "HOMA": -20.860613, "HOMA_TOTAL": -18.896918, "LDM_OFF": 1.008017, "LDM_DIAG": 1.753548, "LDM_FROB": 2.022629, "LDM_RMSD": 0.202263, "LDM_CT_PCT": -10.58, "Q_FROB": 0.558352, "Q_RMSD": 0.058856, "Q_G": 0.083668, "S_HOM": 0.182612, "S_HOM_G": 0.15174, "S_G": 0.194934, "step": 20, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -6.0, "EN": 0.089501, "GEO": 0.238798, "HOMA": 0.671701, "HOMA_TOTAL": -19.349054, "LDM_OFF": 0.575132, "LDM_DIAG": 1.449532, "LDM_FROB": 1.559462, "LDM_RMSD": 0.25991, "LDM_CT_PCT": -11.549722, "Q_FROB": 0.343114, "Q_RMSD": 0.062644, "Q_G": 0.083331, "S_HOM": 0.36174, "S_HOM_G": 0.152116, "S_G": 0.195249, "step": 30, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -6.0, "EN": 11.260752, "GEO": 25.765562, "HOMA": -36.026314, "HOMA_TOTAL": -19.349054, "LDM_OFF": 0.914133, "LDM_DIAG": 1.410649, "LDM_FROB": 1.680943, "LDM_RMSD": 0.280157, "LDM_CT_PCT": -16.065833, "Q_FROB": 0.419007, "Q_RMSD": 0.0765, "Q_G": 0.083331, "S_HOM": 0.261532, "S_HOM_G": 0.152116, "S_G": 0.195249, "step": 30, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -6.0, "EN": 4.349631, "GEO": 18.005521, "HOMA": -21.355152, "HOMA_TOTAL": -19.349054, "LDM_OFF": 1.007358, "LDM_DIAG": 1.758491, "LDM_FROB": 2.026589, "LDM_RMSD": 0.202659, "LDM_CT_PCT": -10.636667, "Q_FROB": 0.553924, "Q_RMSD": 0.058389, "Q_G": 0.083331, "S_HOM": 0.182438, "S_HOM_G": 0.152116, "S_G": 0.195249, "step": 30, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -8.0, "EN": 0.108807, "GEO": 0.217352, "HOMA": 0.673841, "HOMA_TOTAL": -19.811291, "LDM_OFF": 0.569063, "LDM_DIAG": 1.453959, "LDM_FROB": 1.561355, "LDM_RMSD": 0.260226, "LDM_CT_PCT": -11.606111, "Q_FROB": 0.336569, "Q_RMSD": 0.061449, "Q_G": 0.083024, "S_HOM": 0.362609, "S_HOM_G": 0.152578, "S_G": 0.195584, "step": 40, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -8.0, "EN": 11.664554, "GEO": 26.226031, "HOMA": -36.890585, "HOMA_TOTAL": -19.811291, "LDM_OFF": 0.918329, "LDM_DIAG": 1.412275, "LDM_FROB": 1.684591, "LDM_RMSD": 0.280765, "LDM_CT_PCT": -16.130556, "Q_FROB": 0.41916, "Q_RMSD": 0.076528, "Q_G": 0.083024, "S_HOM": 0.260353, "S_HOM_G": 0.152578, "S_G": 0.195584, "step": 40, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -8.0, "EN": 4.513241, "GEO": 18.341552, "HOMA": -21.854793, "HOMA_TOTAL": -19.811291, "LDM_OFF": 1.006656, "LDM_DIAG": 1.763532, "LDM_FROB": 2.030616, "LDM_RMSD": 0.203062, "LDM_CT_PCT": -10.697667, "Q_FROB": 0.549368, "Q_RMSD": 0.057909, "Q_G": 0.083024, "S_HOM": 0.182304, "S_HOM_G": 0.152578, "S_G": 0.195584, "step": 40, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -10.0, "EN": 0.119582, "GEO": 0.210572, "HOMA": 0.669846, "HOMA_TOTAL": -20.288609, "LDM_OFF": 0.564535, "LDM_DIAG": 1.446408, "LDM_FROB": 1.552674, "LDM_RMSD": 0.258779, "LDM_CT_PCT": -11.542778, "Q_FROB": 0.332134, "Q_RMSD": 0.060639, "Q_G": 0.082857, "S_HOM": 0.363788, "S_HOM_G": 0.152994, "S_G": 0.195901, "step": 50, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -10.0, "EN": 12.137034, "GEO": 26.64854, "HOMA": -37.785575, "HOMA_TOTAL": -20.288609, "LDM_OFF": 0.922945, "LDM_DIAG": 1.406417, "LDM_FROB": 1.682211, "LDM_RMSD": 0.280369, "LDM_CT_PCT": -16.125556, "Q_FROB": 0.420014, "Q_RMSD": 0.076684, "Q_G": 0.082857, "S_HOM": 0.259275, "S_HOM_G": 0.152994, "S_G": 0.195901, "step": 50, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -10.0, "EN": 4.638001, "GEO": 18.727502, "HOMA": -22.365503, "HOMA_TOTAL": -20.288609, "LDM_OFF": 1.007694, "LDM_DIAG": 1.75274, "LDM_FROB": 2.021768, "LDM_RMSD": 0.202177, "LDM_CT_PCT": -10.640833, "Q_FROB": 0.547148, "Q_RMSD": 0.057674, "Q_G": 0.082857, "S_HOM": 0.182299, "S_HOM_G": 0.152994, "S_G": 0.195901, "step": 50, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -14.0, "EN": 0.126477, "GEO": 0.236294, "HOMA": 0.637229, "HOMA_TOTAL": -21.4406, "LDM_OFF": 0.557199, "LDM_DIAG": 1.433621, "LDM_FROB": 1.538096, "LDM_RMSD": 0.256349, "LDM_CT_PCT": -11.415833, "Q_FROB": 0.326338, "Q_RMSD": 0.059581, "Q_G": 0.08285, "S_HOM": 0.36707, "S_HOM_G": 0.153395, "S_G": 0.19613, "step": 70, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -14.0, "EN": 13.179833, "GEO": 27.739396, "HOMA": -39.919228, "HOMA_TOTAL": -21.4406, "LDM_OFF": 0.934858, "LDM_DIAG": 1.391945, "LDM_FROB": 1.676744, "LDM_RMSD": 0.279457, "LDM_CT_PCT": -16.082778, "Q_FROB": 0.42388, "Q_RMSD": 0.07739, "Q_G": 0.08285, "S_HOM": 0.257475, "S_HOM_G": 0.153395, "S_G": 0.19613, "step": 70, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -14.0, "EN": 4.874087, "GEO": 19.726034, "HOMA": -23.600121, "HOMA_TOTAL": -21.4406, "LDM_OFF": 1.014344, "LDM_DIAG": 1.737481, "LDM_FROB": 2.011898, "LDM_RMSD": 0.20119, "LDM_CT_PCT": -10.553333, "Q_FROB": 0.547319, "Q_RMSD": 0.057692, "Q_G": 0.08285, "S_HOM": 0.182185, "S_HOM_G": 0.153395, "S_G": 0.19613, "step": 70, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -18.0, "EN": 0.123926, "GEO": 0.25711, "HOMA": 0.618964, "HOMA_TOTAL": -22.978399, "LDM_OFF": 0.549756, "LDM_DIAG": 1.439362, "LDM_FROB": 1.540777, "LDM_RMSD": 0.256796, "LDM_CT_PCT": -11.425833, "Q_FROB": 0.321364, "Q_RMSD": 0.058673, "Q_G": 0.083076, "S_HOM": 0.371039, "S_HOM_G": 0.152836, "S_G": 0.195616, "step": 90, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -18.0, "EN": 14.200495, "GEO": 29.528122, "HOMA": -42.728617, "HOMA_TOTAL": -22.978399, "LDM_OFF": 0.955205, "LDM_DIAG": 1.382876, "LDM_FROB": 1.680703, "LDM_RMSD": 0.280117, "LDM_CT_PCT": -16.069722, "Q_FROB": 0.43247, "Q_RMSD": 0.078958, "Q_G": 0.083076, "S_HOM": 0.254579, "S_HOM_G": 0.152836, "S_G": 0.195616, "step": 90, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -18.0, "EN": 5.211939, "GEO": 21.074747, "HOMA": -25.286687, "HOMA_TOTAL": -22.978399, "LDM_OFF": 1.029694, "LDM_DIAG": 1.742171, "LDM_FROB": 2.023716, "LDM_RMSD": 0.202372, "LDM_CT_PCT": -10.603333, "Q_FROB": 0.552593, "Q_RMSD": 0.058248, "Q_G": 0.083076, "S_HOM": 0.181206, "S_HOM_G": 0.152836, "S_G": 0.195616, "step": 90, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -24.0, "EN": 0.060504, "GEO": 0.200194, "HOMA": 0.739302, "HOMA_TOTAL": -26.219033, "LDM_OFF": 0.534618, "LDM_DIAG": 1.428669, "LDM_FROB": 1.525422, "LDM_RMSD": 0.254237, "LDM_CT_PCT": -11.053889, "Q_FROB": 0.312489, "Q_RMSD": 0.057053, "Q_G": 0.083893, "S_HOM": 0.380068, "S_HOM_G": 0.150439, "S_G": 0.194089, "step": 120, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -24.0, "EN": 15.460409, "GEO": 34.239991, "HOMA": -48.7004, "HOMA_TOTAL": -26.219033, "LDM_OFF": 1.020119, "LDM_DIAG": 1.375831, "LDM_FROB": 1.712762, "LDM_RMSD": 0.28546, "LDM_CT_PCT": -16.011944, "Q_FROB": 0.466293, "Q_RMSD": 0.085133, "Q_G": 0.083893, "S_HOM": 0.243838, "S_HOM_G": 0.150439, "S_G": 0.194089, "step": 120, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -24.0, "EN": 5.698881, "GEO": 24.206334, "HOMA": -28.905215, "HOMA_TOTAL": -26.219033, "LDM_OFF": 1.085968, "LDM_DIAG": 1.729484, "LDM_FROB": 2.042166, "LDM_RMSD": 0.204217, "LDM_CT_PCT": -10.471667, "Q_FROB": 0.57962, "Q_RMSD": 0.061097, "Q_G": 0.083893, "S_HOM": 0.176843, "S_HOM_G": 0.150439, "S_G": 0.194089, "step": 120, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -30.0, "EN": 0.016387, "GEO": 0.068172, "HOMA": 0.915441, "HOMA_TOTAL": -31.680147, "LDM_OFF": 0.501331, "LDM_DIAG": 1.455245, "LDM_FROB": 1.539179, "LDM_RMSD": 0.25653, "LDM_CT_PCT": -10.895, "Q_FROB": 0.285644, "Q_RMSD": 0.052151, "Q_G": 0.084393, "S_HOM": 0.39371, "S_HOM_G": 0.152043, "S_G": 0.191636, "step": 150, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -30.0, "EN": 17.79179, "GEO": 42.043739, "HOMA": -58.835529, "HOMA_TOTAL": -31.680147, "LDM_OFF": 1.132107, "LDM_DIAG": 1.387609, "LDM_FROB": 1.790845, "LDM_RMSD": 0.298474, "LDM_CT_PCT": -16.1925, "Q_FROB": 0.527161, "Q_RMSD": 0.096246, "Q_G": 0.084393, "S_HOM": 0.223177, "S_HOM_G": 0.152043, "S_G": 0.191636, "step": 150, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -30.0, "EN": 6.595519, "GEO": 29.348752, "HOMA": -34.944271, "HOMA_TOTAL": -31.680147, "LDM_OFF": 1.17876, "LDM_DIAG": 1.75215, "LDM_FROB": 2.111754, "LDM_RMSD": 0.211175, "LDM_CT_PCT": -10.608, "Q_FROB": 0.622055, "Q_RMSD": 0.06557, "Q_G": 0.084393, "S_HOM": 0.168055, "S_HOM_G": 0.152043, "S_G": 0.191636, "step": 150, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -36.0, "EN": 3e-06, "GEO": 0.010951, "HOMA": 0.989045, "HOMA_TOTAL": -40.67872, "LDM_OFF": 0.481639, "LDM_DIAG": 1.452778, "LDM_FROB": 1.530536, "LDM_RMSD": 0.255089, "LDM_CT_PCT": -10.470556, "Q_FROB": 0.272785, "Q_RMSD": 0.049804, "Q_G": 0.08517, "S_HOM": 0.409978, "S_HOM_G": 0.151028, "S_G": 0.188631, "step": 180, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -36.0, "EN": 22.797181, "GEO": 53.603068, "HOMA": -75.400249, "HOMA_TOTAL": -40.67872, "LDM_OFF": 1.248444, "LDM_DIAG": 1.377779, "LDM_FROB": 1.859271, "LDM_RMSD": 0.309878, "LDM_CT_PCT": -16.279444, "Q_FROB": 0.586688, "Q_RMSD": 0.107114, "Q_G": 0.08517, "S_HOM": 0.202347, "S_HOM_G": 0.151028, "S_G": 0.188631, "step": 180, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -36.0, "EN": 8.159371, "GEO": 37.687092, "HOMA": -44.846462, "HOMA_TOTAL": -40.67872, "LDM_OFF": 1.285879, "LDM_DIAG": 1.744822, "LDM_FROB": 2.167461, "LDM_RMSD": 0.216746, "LDM_CT_PCT": -10.560167, "Q_FROB": 0.675246, "Q_RMSD": 0.071177, "Q_G": 0.08517, "S_HOM": 0.15841, "S_HOM_G": 0.151028, "S_G": 0.188631, "step": 180, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -44.0, "EN": 0.000648, "GEO": 0.008041, "HOMA": 0.991311, "HOMA_TOTAL": -59.66952, "LDM_OFF": 0.484064, "LDM_DIAG": 1.423898, "LDM_FROB": 1.503929, "LDM_RMSD": 0.250655, "LDM_CT_PCT": -9.934722, "Q_FROB": 0.279301, "Q_RMSD": 0.050993, "Q_G": 0.085803, "S_HOM": 0.423821, "S_HOM_G": 0.149952, "S_G": 0.186031, "step": 220, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -44.0, "EN": 35.083524, "GEO": 76.138673, "HOMA": -110.222197, "HOMA_TOTAL": -59.66952, "LDM_OFF": 1.335504, "LDM_DIAG": 1.339101, "LDM_FROB": 1.891233, "LDM_RMSD": 0.315205, "LDM_CT_PCT": -16.184167, "Q_FROB": 0.609402, "Q_RMSD": 0.111261, "Q_G": 0.085803, "S_HOM": 0.187818, "S_HOM_G": 0.149952, "S_G": 0.186031, "step": 220, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -44.0, "EN": 12.725743, "GEO": 54.008669, "HOMA": -65.734412, "HOMA_TOTAL": -59.66952, "LDM_OFF": 1.371697, "LDM_DIAG": 1.711929, "LDM_FROB": 2.193685, "LDM_RMSD": 0.219368, "LDM_CT_PCT": -10.4325, "Q_FROB": 0.702764, "Q_RMSD": 0.074078, "Q_G": 0.085803, "S_HOM": 0.151164, "S_HOM_G": 0.149952, "S_G": 0.186031, "step": 220, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -52.0, "EN": 0.012461, "GEO": 0.010189, "HOMA": 0.97735, "HOMA_TOTAL": -84.873311, "LDM_OFF": 0.484271, "LDM_DIAG": 1.419006, "LDM_FROB": 1.499365, "LDM_RMSD": 0.249894, "LDM_CT_PCT": -9.861389, "Q_FROB": 0.278411, "Q_RMSD": 0.050831, "Q_G": 0.085095, "S_HOM": 0.42936, "S_HOM_G": 0.150281, "S_G": 0.185946, "step": 260, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -52.0, "EN": 52.317209, "GEO": 105.094559, "HOMA": -156.411768, "HOMA_TOTAL": -84.873311, "LDM_OFF": 1.370007, "LDM_DIAG": 1.324245, "LDM_FROB": 1.905399, "LDM_RMSD": 0.317566, "LDM_CT_PCT": -16.195556, "Q_FROB": 0.602189, "Q_RMSD": 0.109944, "Q_G": 0.085095, "S_HOM": 0.18219, "S_HOM_G": 0.150281, "S_G": 0.185946, "step": 260, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -52.0, "EN": 19.40385, "GEO": 75.056784, "HOMA": -93.460634, "HOMA_TOTAL": -84.873311, "LDM_OFF": 1.403668, "LDM_DIAG": 1.696707, "LDM_FROB": 2.202067, "LDM_RMSD": 0.220207, "LDM_CT_PCT": -10.457333, "Q_FROB": 0.698454, "Q_RMSD": 0.073624, "Q_G": 0.085095, "S_HOM": 0.14837, "S_HOM_G": 0.150281, "S_G": 0.185946, "step": 260, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -60.0, "EN": 0.017438, "GEO": 0.009297, "HOMA": 0.973265, "HOMA_TOTAL": -114.278082, "LDM_OFF": 0.480869, "LDM_DIAG": 1.425969, "LDM_FROB": 1.504866, "LDM_RMSD": 0.250811, "LDM_CT_PCT": -9.921389, "Q_FROB": 0.27544, "Q_RMSD": 0.050288, "Q_G": 0.084756, "S_HOM": 0.432774, "S_HOM_G": 0.150228, "S_G": 0.185383, "step": 300, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -60.0, "EN": 70.93697, "GEO": 140.390558, "HOMA": -210.327527, "HOMA_TOTAL": -114.278082, "LDM_OFF": 1.383795, "LDM_DIAG": 1.315547, "LDM_FROB": 1.909333, "LDM_RMSD": 0.318222, "LDM_CT_PCT": -16.271389, "Q_FROB": 0.590346, "Q_RMSD": 0.107782, "Q_G": 0.084756, "S_HOM": 0.177908, "S_HOM_G": 0.150228, "S_G": 0.185383, "step": 300, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -60.0, "EN": 25.816925, "GEO": 100.982298, "HOMA": -125.799223, "HOMA_TOTAL": -114.278082, "LDM_OFF": 1.417402, "LDM_DIAG": 1.699615, "LDM_FROB": 2.213079, "LDM_RMSD": 0.221308, "LDM_CT_PCT": -10.546, "Q_FROB": 0.691608, "Q_RMSD": 0.072902, "Q_G": 0.084756, "S_HOM": 0.146071, "S_HOM_G": 0.150228, "S_G": 0.185383, "step": 300, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -70.0, "EN": 5e-06, "GEO": 0.018322, "HOMA": 0.981673, "HOMA_TOTAL": -157.669422, "LDM_OFF": 0.487658, "LDM_DIAG": 1.402133, "LDM_FROB": 1.484516, "LDM_RMSD": 0.247419, "LDM_CT_PCT": -9.602222, "Q_FROB": 0.28476, "Q_RMSD": 0.05199, "Q_G": 0.085873, "S_HOM": 0.432666, "S_HOM_G": 0.148865, "S_G": 0.183281, "step": 350, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -70.0, "EN": 94.754544, "GEO": 196.126561, "HOMA": -289.881105, "HOMA_TOTAL": -157.669422, "LDM_OFF": 1.391399, "LDM_DIAG": 1.295406, "LDM_FROB": 1.90107, "LDM_RMSD": 0.316845, "LDM_CT_PCT": -16.144444, "Q_FROB": 0.573966, "Q_RMSD": 0.104791, "Q_G": 0.085873, "S_HOM": 0.173678, "S_HOM_G": 0.148865, "S_G": 0.183281, "step": 350, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -70.0, "EN": 34.52165, "GEO": 140.011418, "HOMA": -173.533068, "HOMA_TOTAL": -157.669422, "LDM_OFF": 1.429113, "LDM_DIAG": 1.680515, "LDM_FROB": 2.206013, "LDM_RMSD": 0.220601, "LDM_CT_PCT": -10.407167, "Q_FROB": 0.684719, "Q_RMSD": 0.072176, "Q_G": 0.085873, "S_HOM": 0.143616, "S_HOM_G": 0.148865, "S_G": 0.183281, "step": 350, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -80.0, "EN": 0.008338, "GEO": 0.002065, "HOMA": 0.989597, "HOMA_TOTAL": -204.084969, "LDM_OFF": 0.484623, "LDM_DIAG": 1.413254, "LDM_FROB": 1.494037, "LDM_RMSD": 0.249006, "LDM_CT_PCT": -9.734722, "Q_FROB": 0.279899, "Q_RMSD": 0.051102, "Q_G": 0.085319, "S_HOM": 0.433293, "S_HOM_G": 0.148866, "S_G": 0.183053, "step": 400, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -80.0, "EN": 124.57022, "GEO": 251.41078, "HOMA": -374.980999, "HOMA_TOTAL": -204.084969, "LDM_OFF": 1.401372, "LDM_DIAG": 1.30512, "LDM_FROB": 1.914989, "LDM_RMSD": 0.319165, "LDM_CT_PCT": -16.230833, "Q_FROB": 0.56764, "Q_RMSD": 0.103636, "Q_G": 0.085319, "S_HOM": 0.17179, "S_HOM_G": 0.148866, "S_G": 0.183053, "step": 400, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -80.0, "EN": 45.26582, "GEO": 180.326269, "HOMA": -224.592089, "HOMA_TOTAL": -204.084969, "LDM_OFF": 1.437493, "LDM_DIAG": 1.685186, "LDM_FROB": 2.215003, "LDM_RMSD": 0.2215, "LDM_CT_PCT": -10.517, "Q_FROB": 0.679133, "Q_RMSD": 0.071587, "Q_G": 0.085319, "S_HOM": 0.141789, "S_HOM_G": 0.148866, "S_G": 0.183053, "step": 400, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -100.0, "EN": 7.3e-05, "GEO": 0.007833, "HOMA": 0.992095, "HOMA_TOTAL": -293.481238, "LDM_OFF": 0.487339, "LDM_DIAG": 1.394946, "LDM_FROB": 1.477624, "LDM_RMSD": 0.246271, "LDM_CT_PCT": -9.509167, "Q_FROB": 0.285256, "Q_RMSD": 0.05208, "Q_G": 0.085669, "S_HOM": 0.434514, "S_HOM_G": 0.148384, "S_G": 0.181973, "step": 500, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -100.0, "EN": 178.708817, "GEO": 361.165647, "HOMA": -538.874463, "HOMA_TOTAL": -293.481238, "LDM_OFF": 1.412743, "LDM_DIAG": 1.287847, "LDM_FROB": 1.911647, "LDM_RMSD": 0.318608, "LDM_CT_PCT": -16.126111, "Q_FROB": 0.561615, "Q_RMSD": 0.102536, "Q_G": 0.085669, "S_HOM": 0.169655, "S_HOM_G": 0.148384, "S_G": 0.181973, "step": 500, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -100.0, "EN": 64.495078, "GEO": 259.434225, "HOMA": -322.929303, "HOMA_TOTAL": -293.481238, "LDM_OFF": 1.450239, "LDM_DIAG": 1.666176, "LDM_FROB": 2.208922, "LDM_RMSD": 0.220892, "LDM_CT_PCT": -10.435833, "Q_FROB": 0.678388, "Q_RMSD": 0.071508, "Q_G": 0.085669, "S_HOM": 0.139383, "S_HOM_G": 0.148384, "S_G": 0.181973, "step": 500, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -120.0, "EN": 0.004381, "GEO": 0.004856, "HOMA": 0.990763, "HOMA_TOTAL": -402.191344, "LDM_OFF": 0.487414, "LDM_DIAG": 1.396432, "LDM_FROB": 1.479052, "LDM_RMSD": 0.246509, "LDM_CT_PCT": -9.528611, "Q_FROB": 0.283904, "Q_RMSD": 0.051833, "Q_G": 0.086117, "S_HOM": 0.434591, "S_HOM_G": 0.147395, "S_G": 0.180753, "step": 600, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -120.0, "EN": 241.814854, "GEO": 497.360039, "HOMA": -738.174893, "HOMA_TOTAL": -402.191344, "LDM_OFF": 1.412417, "LDM_DIAG": 1.297941, "LDM_FROB": 1.918221, "LDM_RMSD": 0.319703, "LDM_CT_PCT": -16.1575, "Q_FROB": 0.550816, "Q_RMSD": 0.100565, "Q_G": 0.086117, "S_HOM": 0.168025, "S_HOM_G": 0.147395, "S_G": 0.180753, "step": 600, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -120.0, "EN": 87.796016, "GEO": 355.714462, "HOMA": -442.510478, "HOMA_TOTAL": -402.191344, "LDM_OFF": 1.450559, "LDM_DIAG": 1.667672, "LDM_FROB": 2.210261, "LDM_RMSD": 0.221026, "LDM_CT_PCT": -10.452333, "Q_FROB": 0.670106, "Q_RMSD": 0.070635, "Q_G": 0.086117, "S_HOM": 0.138589, "S_HOM_G": 0.147395, "S_G": 0.180753, "step": 600, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -140.0, "EN": 0.001412, "GEO": 0.01036, "HOMA": 0.988228, "HOMA_TOTAL": -498.411977, "LDM_OFF": 0.491165, "LDM_DIAG": 1.401981, "LDM_FROB": 1.485528, "LDM_RMSD": 0.247588, "LDM_CT_PCT": -9.503611, "Q_FROB": 0.287807, "Q_RMSD": 0.052546, "Q_G": 0.085956, "S_HOM": 0.433598, "S_HOM_G": 0.146947, "S_G": 0.180564, "step": 700, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -140.0, "EN": 299.556813, "GEO": 616.020052, "HOMA": -914.576864, "HOMA_TOTAL": -498.411977, "LDM_OFF": 1.414756, "LDM_DIAG": 1.294351, "LDM_FROB": 1.917519, "LDM_RMSD": 0.319587, "LDM_CT_PCT": -16.171667, "Q_FROB": 0.545865, "Q_RMSD": 0.099661, "Q_G": 0.085956, "S_HOM": 0.167555, "S_HOM_G": 0.146947, "S_G": 0.180564, "step": 700, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -140.0, "EN": 108.273729, "GEO": 441.079439, "HOMA": -548.353167, "HOMA_TOTAL": -498.411977, "LDM_OFF": 1.455502, "LDM_DIAG": 1.664919, "LDM_FROB": 2.211434, "LDM_RMSD": 0.221143, "LDM_CT_PCT": -10.4135, "Q_FROB": 0.669426, "Q_RMSD": 0.070564, "Q_G": 0.085956, "S_HOM": 0.138428, "S_HOM_G": 0.146947, "S_G": 0.180564, "step": 700, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -160.0, "EN": 0.003339, "GEO": 0.006364, "HOMA": 0.990297, "HOMA_TOTAL": -577.546533, "LDM_OFF": 0.492875, "LDM_DIAG": 1.379502, "LDM_FROB": 1.464907, "LDM_RMSD": 0.244151, "LDM_CT_PCT": -9.323056, "Q_FROB": 0.289089, "Q_RMSD": 0.05278, "Q_G": 0.085688, "S_HOM": 0.437436, "S_HOM_G": 0.147055, "S_G": 0.180501, "step": 800, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -160.0, "EN": 345.036209, "GEO": 715.622897, "HOMA": -1059.659105, "HOMA_TOTAL": -577.546533, "LDM_OFF": 1.416508, "LDM_DIAG": 1.276115, "LDM_FROB": 1.906558, "LDM_RMSD": 0.31776, "LDM_CT_PCT": -16.015278, "Q_FROB": 0.543261, "Q_RMSD": 0.099185, "Q_G": 0.085688, "S_HOM": 0.168119, "S_HOM_G": 0.147055, "S_G": 0.180501, "step": 800, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -160.0, "EN": 125.127711, "GEO": 511.273376, "HOMA": -635.401087, "HOMA_TOTAL": -577.546533, "LDM_OFF": 1.457244, "LDM_DIAG": 1.648832, "LDM_FROB": 2.200502, "LDM_RMSD": 0.22005, "LDM_CT_PCT": -10.324167, "Q_FROB": 0.667251, "Q_RMSD": 0.070334, "Q_G": 0.085688, "S_HOM": 0.138398, "S_HOM_G": 0.147055, "S_G": 0.180501, "step": 800, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -180.0, "EN": 0.014779, "GEO": 0.004192, "HOMA": 0.981029, "HOMA_TOTAL": -665.00314, "LDM_OFF": 0.4911, "LDM_DIAG": 1.370156, "LDM_FROB": 1.455509, "LDM_RMSD": 0.242585, "LDM_CT_PCT": -9.294167, "Q_FROB": 0.286764, "Q_RMSD": 0.052356, "Q_G": 0.085076, "S_HOM": 0.439569, "S_HOM_G": 0.148157, "S_G": 0.181456, "step": 900, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -180.0, "EN": 400.09983, "GEO": 820.890113, "HOMA": -1219.989943, "HOMA_TOTAL": -665.00314, "LDM_OFF": 1.418107, "LDM_DIAG": 1.268973, "LDM_FROB": 1.902977, "LDM_RMSD": 0.317163, "LDM_CT_PCT": -16.011944, "Q_FROB": 0.538492, "Q_RMSD": 0.098315, "Q_G": 0.085076, "S_HOM": 0.168919, "S_HOM_G": 0.148157, "S_G": 0.181456, "step": 900, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -180.0, "EN": 145.128122, "GEO": 587.473438, "HOMA": -731.60156, "HOMA_TOTAL": -665.00314, "LDM_OFF": 1.458121, "LDM_DIAG": 1.64011, "LDM_FROB": 2.194556, "LDM_RMSD": 0.219456, "LDM_CT_PCT": -10.319, "Q_FROB": 0.662752, "Q_RMSD": 0.06986, "Q_G": 0.085076, "S_HOM": 0.138628, "S_HOM_G": 0.148157, "S_G": 0.181456, "step": 900, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": -198.0, "EN": 0.00044, "GEO": 0.004115, "HOMA": 0.995445, "HOMA_TOTAL": -772.445006, "LDM_OFF": 0.489061, "LDM_DIAG": 1.404266, "LDM_FROB": 1.486991, "LDM_RMSD": 0.247832, "LDM_CT_PCT": -9.554444, "Q_FROB": 0.285437, "Q_RMSD": 0.052113, "Q_G": 0.08584, "S_HOM": 0.431748, "S_HOM_G": 0.1471, "S_G": 0.180243, "step": 990, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": -198.0, "EN": 461.361168, "GEO": 956.617073, "HOMA": -1416.978241, "HOMA_TOTAL": -772.445006, "LDM_OFF": 1.41493, "LDM_DIAG": 1.309965, "LDM_FROB": 1.928221, "LDM_RMSD": 0.32137, "LDM_CT_PCT": -16.255278, "Q_FROB": 0.532193, "Q_RMSD": 0.097165, "Q_G": 0.08584, "S_HOM": 0.167939, "S_HOM_G": 0.1471, "S_G": 0.180243, "step": 990, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": -198.0, "EN": 166.627623, "GEO": 684.161714, "HOMA": -849.789337, "HOMA_TOTAL": -772.445006, "LDM_OFF": 1.454518, "LDM_DIAG": 1.675018, "LDM_FROB": 2.218402, "LDM_RMSD": 0.22184, "LDM_CT_PCT": -10.513667, "Q_FROB": 0.658102, "Q_RMSD": 0.06937, "Q_G": 0.08584, "S_HOM": 0.1377, "S_HOM_G": 0.1471, "S_G": 0.180243, "step": 990, "direction": "reverse"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 0.0, "EN": 0.077029, "GEO": 0.340518, "HOMA": 0.582454, "HOMA_TOTAL": -16.538493, "LDM_OFF": 0.599242, "LDM_DIAG": 1.446424, "LDM_FROB": 1.565642, "LDM_RMSD": 0.26094, "LDM_CT_PCT": -11.661667, "Q_FROB": 0.365373, "Q_RMSD": 0.066708, "Q_G": 0.083811, "S_HOM": 0.355085, "S_HOM_G": 0.151714, "S_G": 0.19483, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 0.0, "EN": 10.066364, "GEO": 21.760749, "HOMA": -30.827113, "HOMA_TOTAL": -16.538493, "LDM_OFF": 0.861599, "LDM_DIAG": 1.406696, "LDM_FROB": 1.64959, "LDM_RMSD": 0.274932, "LDM_CT_PCT": -15.963056, "Q_FROB": 0.399965, "Q_RMSD": 0.073023, "Q_G": 0.083811, "S_HOM": 0.272416, "S_HOM_G": 0.151714, "S_G": 0.19483, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 0.0, "EN": 3.69636, "GEO": 15.54153, "HOMA": -18.23789, "HOMA_TOTAL": -16.538493, "LDM_OFF": 0.974203, "LDM_DIAG": 1.758594, "LDM_FROB": 2.010404, "LDM_RMSD": 0.20104, "LDM_CT_PCT": -10.617833, "Q_FROB": 0.552006, "Q_RMSD": 0.058187, "Q_G": 0.083811, "S_HOM": 0.185616, "S_HOM_G": 0.151714, "S_G": 0.19483, "step": 0, "direction": "TS"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 2.0, "EN": 0.07892, "GEO": 0.340929, "HOMA": 0.580151, "HOMA_TOTAL": -16.69881, "LDM_OFF": 0.599474, "LDM_DIAG": 1.448391, "LDM_FROB": 1.567548, "LDM_RMSD": 0.261258, "LDM_CT_PCT": -11.671111, "Q_FROB": 0.365454, "Q_RMSD": 0.066723, "Q_G": 0.083772, "S_HOM": 0.355106, "S_HOM_G": 0.151742, "S_G": 0.194834, "step": 10, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 2.0, "EN": 10.10452, "GEO": 21.99763, "HOMA": -31.10215, "HOMA_TOTAL": -16.69881, "LDM_OFF": 0.864194, "LDM_DIAG": 1.405942, "LDM_FROB": 1.650304, "LDM_RMSD": 0.275051, "LDM_CT_PCT": -15.950278, "Q_FROB": 0.400434, "Q_RMSD": 0.073109, "Q_G": 0.083772, "S_HOM": 0.271761, "S_HOM_G": 0.151742, "S_G": 0.194834, "step": 10, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 2.0, "EN": 3.772854, "GEO": 15.651329, "HOMA": -18.424183, "HOMA_TOTAL": -16.69881, "LDM_OFF": 0.97661, "LDM_DIAG": 1.758699, "LDM_FROB": 2.011663, "LDM_RMSD": 0.201166, "LDM_CT_PCT": -10.621667, "Q_FROB": 0.552505, "Q_RMSD": 0.058239, "Q_G": 0.083772, "S_HOM": 0.185354, "S_HOM_G": 0.151742, "S_G": 0.194834, "step": 10, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 4.0, "EN": 0.084286, "GEO": 0.327362, "HOMA": 0.588352, "HOMA_TOTAL": -16.834371, "LDM_OFF": 0.598103, "LDM_DIAG": 1.449348, "LDM_FROB": 1.567909, "LDM_RMSD": 0.261318, "LDM_CT_PCT": -11.671111, "Q_FROB": 0.363731, "Q_RMSD": 0.066408, "Q_G": 0.083626, "S_HOM": 0.355217, "S_HOM_G": 0.151953, "S_G": 0.195065, "step": 20, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 4.0, "EN": 10.222912, "GEO": 22.130392, "HOMA": -31.353304, "HOMA_TOTAL": -16.834371, "LDM_OFF": 0.866576, "LDM_DIAG": 1.407702, "LDM_FROB": 1.653051, "LDM_RMSD": 0.275509, "LDM_CT_PCT": -15.970278, "Q_FROB": 0.400772, "Q_RMSD": 0.073171, "Q_G": 0.083626, "S_HOM": 0.271014, "S_HOM_G": 0.151953, "S_G": 0.195065, "step": 20, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 4.0, "EN": 3.858365, "GEO": 15.71828, "HOMA": -18.576645, "HOMA_TOTAL": -16.834371, "LDM_OFF": 0.977481, "LDM_DIAG": 1.757345, "LDM_FROB": 2.010903, "LDM_RMSD": 0.20109, "LDM_CT_PCT": -10.6175, "Q_FROB": 0.551358, "Q_RMSD": 0.058118, "Q_G": 0.083626, "S_HOM": 0.185213, "S_HOM_G": 0.151953, "S_G": 0.195065, "step": 20, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 6.0, "EN": 0.094335, "GEO": 0.301959, "HOMA": 0.603706, "HOMA_TOTAL": -16.942235, "LDM_OFF": 0.595302, "LDM_DIAG": 1.447503, "LDM_FROB": 1.565136, "LDM_RMSD": 0.260856, "LDM_CT_PCT": -11.658611, "Q_FROB": 0.360291, "Q_RMSD": 0.06578, "Q_G": 0.083378, "S_HOM": 0.355339, "S_HOM_G": 0.152254, "S_G": 0.195388, "step": 30, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 6.0, "EN": 10.4307, "GEO": 22.142015, "HOMA": -31.572715, "HOMA_TOTAL": -16.942235, "LDM_OFF": 0.868848, "LDM_DIAG": 1.411355, "LDM_FROB": 1.657353, "LDM_RMSD": 0.276226, "LDM_CT_PCT": -16.025278, "Q_FROB": 0.400967, "Q_RMSD": 0.073206, "Q_G": 0.083378, "S_HOM": 0.270215, "S_HOM_G": 0.152254, "S_G": 0.195388, "step": 30, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 6.0, "EN": 3.952127, "GEO": 15.739386, "HOMA": -18.691513, "HOMA_TOTAL": -16.942235, "LDM_OFF": 0.97692, "LDM_DIAG": 1.754631, "LDM_FROB": 2.008258, "LDM_RMSD": 0.200826, "LDM_CT_PCT": -10.616667, "Q_FROB": 0.548572, "Q_RMSD": 0.057825, "Q_G": 0.083378, "S_HOM": 0.185132, "S_HOM_G": 0.152254, "S_G": 0.195388, "step": 30, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 8.0, "EN": 0.109818, "GEO": 0.273079, "HOMA": 0.617103, "HOMA_TOTAL": -17.0208, "LDM_OFF": 0.591226, "LDM_DIAG": 1.451511, "LDM_FROB": 1.567301, "LDM_RMSD": 0.261217, "LDM_CT_PCT": -11.706111, "Q_FROB": 0.355468, "Q_RMSD": 0.064899, "Q_G": 0.083081, "S_HOM": 0.355547, "S_HOM_G": 0.152627, "S_G": 0.195749, "step": 40, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 8.0, "EN": 10.685517, "GEO": 22.062256, "HOMA": -31.747773, "HOMA_TOTAL": -17.0208, "LDM_OFF": 0.869939, "LDM_DIAG": 1.416474, "LDM_FROB": 1.662286, "LDM_RMSD": 0.277048, "LDM_CT_PCT": -16.106667, "Q_FROB": 0.40042, "Q_RMSD": 0.073106, "Q_G": 0.083081, "S_HOM": 0.269663, "S_HOM_G": 0.152627, "S_G": 0.195749, "step": 40, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 8.0, "EN": 4.044642, "GEO": 15.722717, "HOMA": -18.767358, "HOMA_TOTAL": -17.0208, "LDM_OFF": 0.974186, "LDM_DIAG": 1.759054, "LDM_FROB": 2.010798, "LDM_RMSD": 0.20108, "LDM_CT_PCT": -10.663167, "Q_FROB": 0.544023, "Q_RMSD": 0.057345, "Q_G": 0.083081, "S_HOM": 0.18524, "S_HOM_G": 0.152627, "S_G": 0.195749, "step": 40, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 10.0, "EN": 0.127879, "GEO": 0.254288, "HOMA": 0.617833, "HOMA_TOTAL": -17.073479, "LDM_OFF": 0.587499, "LDM_DIAG": 1.45371, "LDM_FROB": 1.567937, "LDM_RMSD": 0.261323, "LDM_CT_PCT": -11.751667, "Q_FROB": 0.350935, "Q_RMSD": 0.064072, "Q_G": 0.082816, "S_HOM": 0.355666, "S_HOM_G": 0.15297, "S_G": 0.196053, "step": 50, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 10.0, "EN": 10.927518, "GEO": 21.944699, "HOMA": -31.872216, "HOMA_TOTAL": -17.073479, "LDM_OFF": 0.869613, "LDM_DIAG": 1.414245, "LDM_FROB": 1.660216, "LDM_RMSD": 0.276703, "LDM_CT_PCT": -16.127222, "Q_FROB": 0.399346, "Q_RMSD": 0.07291, "Q_G": 0.082816, "S_HOM": 0.269462, "S_HOM_G": 0.15297, "S_G": 0.196053, "step": 50, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 10.0, "EN": 4.114796, "GEO": 15.694228, "HOMA": -18.809025, "HOMA_TOTAL": -17.073479, "LDM_OFF": 0.970388, "LDM_DIAG": 1.75821, "LDM_FROB": 2.008222, "LDM_RMSD": 0.200822, "LDM_CT_PCT": -10.680167, "Q_FROB": 0.539265, "Q_RMSD": 0.056844, "Q_G": 0.082816, "S_HOM": 0.185433, "S_HOM_G": 0.15297, "S_G": 0.196053, "step": 50, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 14.0, "EN": 0.152218, "GEO": 0.281714, "HOMA": 0.566069, "HOMA_TOTAL": -17.143343, "LDM_OFF": 0.586418, "LDM_DIAG": 1.447028, "LDM_FROB": 1.561338, "LDM_RMSD": 0.260223, "LDM_CT_PCT": -11.7375, "Q_FROB": 0.349397, "Q_RMSD": 0.063791, "Q_G": 0.082649, "S_HOM": 0.356255, "S_HOM_G": 0.153518, "S_G": 0.196477, "step": 70, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 14.0, "EN": 11.229985, "GEO": 21.783961, "HOMA": -32.013946, "HOMA_TOTAL": -17.143343, "LDM_OFF": 0.865615, "LDM_DIAG": 1.402726, "LDM_FROB": 1.648311, "LDM_RMSD": 0.274719, "LDM_CT_PCT": -16.073333, "Q_FROB": 0.396801, "Q_RMSD": 0.072446, "Q_G": 0.082649, "S_HOM": 0.270506, "S_HOM_G": 0.153518, "S_G": 0.196477, "step": 70, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 14.0, "EN": 4.13716, "GEO": 15.709468, "HOMA": -18.846628, "HOMA_TOTAL": -17.143343, "LDM_OFF": 0.965234, "LDM_DIAG": 1.749881, "LDM_FROB": 1.99844, "LDM_RMSD": 0.199844, "LDM_CT_PCT": -10.639333, "Q_FROB": 0.535778, "Q_RMSD": 0.056476, "Q_G": 0.082649, "S_HOM": 0.186138, "S_HOM_G": 0.153518, "S_G": 0.196477, "step": 70, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 18.0, "EN": 0.160072, "GEO": 0.371701, "HOMA": 0.468227, "HOMA_TOTAL": -17.148583, "LDM_OFF": 0.593541, "LDM_DIAG": 1.43141, "LDM_FROB": 1.549589, "LDM_RMSD": 0.258265, "LDM_CT_PCT": -11.6425, "Q_FROB": 0.357149, "Q_RMSD": 0.065206, "Q_G": 0.082852, "S_HOM": 0.356592, "S_HOM_G": 0.153455, "S_G": 0.196369, "step": 90, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 18.0, "EN": 11.183913, "GEO": 21.778693, "HOMA": -31.962606, "HOMA_TOTAL": -17.148583, "LDM_OFF": 0.859758, "LDM_DIAG": 1.395485, "LDM_FROB": 1.639074, "LDM_RMSD": 0.273179, "LDM_CT_PCT": -16.011111, "Q_FROB": 0.395117, "Q_RMSD": 0.072138, "Q_G": 0.082852, "S_HOM": 0.272294, "S_HOM_G": 0.153455, "S_G": 0.196369, "step": 90, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 18.0, "EN": 4.063379, "GEO": 15.766875, "HOMA": -18.830254, "HOMA_TOTAL": -17.148583, "LDM_OFF": 0.965105, "LDM_DIAG": 1.740868, "LDM_FROB": 1.99049, "LDM_RMSD": 0.199049, "LDM_CT_PCT": -10.5785, "Q_FROB": 0.540549, "Q_RMSD": 0.056979, "Q_G": 0.082852, "S_HOM": 0.186681, "S_HOM_G": 0.153455, "S_G": 0.196369, "step": 90, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 24.0, "EN": 0.161298, "GEO": 0.46324, "HOMA": 0.375461, "HOMA_TOTAL": -16.78995, "LDM_OFF": 0.600214, "LDM_DIAG": 1.423933, "LDM_FROB": 1.545264, "LDM_RMSD": 0.257544, "LDM_CT_PCT": -11.613333, "Q_FROB": 0.364414, "Q_RMSD": 0.066533, "Q_G": 0.083248, "S_HOM": 0.356107, "S_HOM_G": 0.153042, "S_G": 0.195911, "step": 120, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 24.0, "EN": 10.49217, "GEO": 21.683973, "HOMA": -31.176143, "HOMA_TOTAL": -16.78995, "LDM_OFF": 0.848848, "LDM_DIAG": 1.385336, "LDM_FROB": 1.624715, "LDM_RMSD": 0.270786, "LDM_CT_PCT": -15.843056, "Q_FROB": 0.39255, "Q_RMSD": 0.071669, "Q_G": 0.083248, "S_HOM": 0.275098, "S_HOM_G": 0.153042, "S_G": 0.195911, "step": 120, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 24.0, "EN": 3.893976, "GEO": 15.563505, "HOMA": -18.457481, "HOMA_TOTAL": -16.78995, "LDM_OFF": 0.961705, "LDM_DIAG": 1.737954, "LDM_FROB": 1.986293, "LDM_RMSD": 0.198629, "LDM_CT_PCT": -10.533333, "Q_FROB": 0.54497, "Q_RMSD": 0.057445, "Q_G": 0.083248, "S_HOM": 0.187195, "S_HOM_G": 0.153042, "S_G": 0.195911, "step": 120, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 30.0, "EN": 0.166694, "GEO": 0.400943, "HOMA": 0.432363, "HOMA_TOTAL": -15.936704, "LDM_OFF": 0.601322, "LDM_DIAG": 1.432598, "LDM_FROB": 1.553681, "LDM_RMSD": 0.258947, "LDM_CT_PCT": -11.700833, "Q_FROB": 0.363767, "Q_RMSD": 0.066414, "Q_G": 0.083023, "S_HOM": 0.354035, "S_HOM_G": 0.152794, "S_G": 0.195961, "step": 150, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 30.0, "EN": 10.096189, "GEO": 20.558991, "HOMA": -29.65518, "HOMA_TOTAL": -15.936704, "LDM_OFF": 0.838508, "LDM_DIAG": 1.401168, "LDM_FROB": 1.632901, "LDM_RMSD": 0.27215, "LDM_CT_PCT": -15.946111, "Q_FROB": 0.389746, "Q_RMSD": 0.071158, "Q_G": 0.083023, "S_HOM": 0.276918, "S_HOM_G": 0.152794, "S_G": 0.195961, "step": 150, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 30.0, "EN": 3.795291, "GEO": 14.731768, "HOMA": -17.527058, "HOMA_TOTAL": -15.936704, "LDM_OFF": 0.952314, "LDM_DIAG": 1.747963, "LDM_FROB": 1.990547, "LDM_RMSD": 0.199055, "LDM_CT_PCT": -10.598333, "Q_FROB": 0.540994, "Q_RMSD": 0.057026, "Q_G": 0.083023, "S_HOM": 0.18773, "S_HOM_G": 0.152794, "S_G": 0.195961, "step": 150, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 36.0, "EN": 0.170101, "GEO": 0.36293, "HOMA": 0.466969, "HOMA_TOTAL": -14.739745, "LDM_OFF": 0.612312, "LDM_DIAG": 1.443538, "LDM_FROB": 1.568033, "LDM_RMSD": 0.261339, "LDM_CT_PCT": -11.836111, "Q_FROB": 0.3718, "Q_RMSD": 0.067881, "Q_G": 0.082772, "S_HOM": 0.349975, "S_HOM_G": 0.152577, "S_G": 0.196105, "step": 180, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 36.0, "EN": 9.864315, "GEO": 18.685648, "HOMA": -27.549962, "HOMA_TOTAL": -14.739745, "LDM_OFF": 0.821663, "LDM_DIAG": 1.404916, "LDM_FROB": 1.62755, "LDM_RMSD": 0.271258, "LDM_CT_PCT": -15.972222, "Q_FROB": 0.385305, "Q_RMSD": 0.070347, "Q_G": 0.082772, "S_HOM": 0.280071, "S_HOM_G": 0.152577, "S_G": 0.196105, "step": 180, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 36.0, "EN": 3.604706, "GEO": 13.572936, "HOMA": -16.177643, "HOMA_TOTAL": -14.739745, "LDM_OFF": 0.941587, "LDM_DIAG": 1.749369, "LDM_FROB": 1.986675, "LDM_RMSD": 0.198668, "LDM_CT_PCT": -10.6115, "Q_FROB": 0.540574, "Q_RMSD": 0.056981, "Q_G": 0.082772, "S_HOM": 0.188693, "S_HOM_G": 0.152577, "S_G": 0.196105, "step": 180, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 44.0, "EN": 0.190023, "GEO": 0.474116, "HOMA": 0.335861, "HOMA_TOTAL": -12.555179, "LDM_OFF": 0.640637, "LDM_DIAG": 1.432086, "LDM_FROB": 1.568849, "LDM_RMSD": 0.261475, "LDM_CT_PCT": -11.916389, "Q_FROB": 0.395941, "Q_RMSD": 0.072289, "Q_G": 0.083106, "S_HOM": 0.343542, "S_HOM_G": 0.15113, "S_G": 0.195371, "step": 220, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 44.0, "EN": 8.513694, "GEO": 15.900122, "HOMA": -23.413817, "HOMA_TOTAL": -12.555179, "LDM_OFF": 0.780093, "LDM_DIAG": 1.397427, "LDM_FROB": 1.600421, "LDM_RMSD": 0.266737, "LDM_CT_PCT": -15.802222, "Q_FROB": 0.37803, "Q_RMSD": 0.069019, "Q_G": 0.083106, "S_HOM": 0.288335, "S_HOM_G": 0.15113, "S_G": 0.195371, "step": 220, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 44.0, "EN": 3.164628, "GEO": 11.609992, "HOMA": -13.77462, "HOMA_TOTAL": -12.555179, "LDM_OFF": 0.923512, "LDM_DIAG": 1.744863, "LDM_FROB": 1.974189, "LDM_RMSD": 0.197419, "LDM_CT_PCT": -10.571, "Q_FROB": 0.550591, "Q_RMSD": 0.058037, "Q_G": 0.083106, "S_HOM": 0.190728, "S_HOM_G": 0.15113, "S_G": 0.195371, "step": 220, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 52.0, "EN": 0.313228, "GEO": 0.701881, "HOMA": -0.015108, "HOMA_TOTAL": -8.84297, "LDM_OFF": 0.676996, "LDM_DIAG": 1.426277, "LDM_FROB": 1.578794, "LDM_RMSD": 0.263132, "LDM_CT_PCT": -12.115278, "Q_FROB": 0.42382, "Q_RMSD": 0.077379, "Q_G": 0.083113, "S_HOM": 0.334939, "S_HOM_G": 0.148283, "S_G": 0.194405, "step": 260, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 52.0, "EN": 6.251838, "GEO": 11.062818, "HOMA": -16.314656, "HOMA_TOTAL": -8.84297, "LDM_OFF": 0.736333, "LDM_DIAG": 1.411936, "LDM_FROB": 1.592404, "LDM_RMSD": 0.265401, "LDM_CT_PCT": -15.691667, "Q_FROB": 0.387116, "Q_RMSD": 0.070677, "Q_G": 0.083113, "S_HOM": 0.296213, "S_HOM_G": 0.148283, "S_G": 0.194405, "step": 260, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 52.0, "EN": 2.479994, "GEO": 8.176682, "HOMA": -9.656675, "HOMA_TOTAL": -8.84297, "LDM_OFF": 0.909571, "LDM_DIAG": 1.748718, "LDM_FROB": 1.971125, "LDM_RMSD": 0.197112, "LDM_CT_PCT": -10.5795, "Q_FROB": 0.57299, "Q_RMSD": 0.060398, "Q_G": 0.083113, "S_HOM": 0.191877, "S_HOM_G": 0.148283, "S_G": 0.194405, "step": 260, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 60.0, "EN": 0.609892, "GEO": 1.138426, "HOMA": -0.748318, "HOMA_TOTAL": -4.049122, "LDM_OFF": 0.730209, "LDM_DIAG": 1.431099, "LDM_FROB": 1.606627, "LDM_RMSD": 0.267771, "LDM_CT_PCT": -12.405278, "Q_FROB": 0.466323, "Q_RMSD": 0.085138, "Q_G": 0.083182, "S_HOM": 0.32706, "S_HOM_G": 0.148614, "S_G": 0.192377, "step": 300, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 60.0, "EN": 3.958644, "GEO": 4.327851, "HOMA": -7.286494, "HOMA_TOTAL": -4.049122, "LDM_OFF": 0.713267, "LDM_DIAG": 1.436712, "LDM_FROB": 1.604023, "LDM_RMSD": 0.267337, "LDM_CT_PCT": -15.577778, "Q_FROB": 0.414126, "Q_RMSD": 0.075609, "Q_G": 0.083182, "S_HOM": 0.298758, "S_HOM_G": 0.148614, "S_G": 0.192377, "step": 300, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 60.0, "EN": 1.513437, "GEO": 3.573744, "HOMA": -4.08718, "HOMA_TOTAL": -4.049122, "LDM_OFF": 0.924799, "LDM_DIAG": 1.760745, "LDM_FROB": 1.988838, "LDM_RMSD": 0.198884, "LDM_CT_PCT": -10.597167, "Q_FROB": 0.618146, "Q_RMSD": 0.065158, "Q_G": 0.083182, "S_HOM": 0.190453, "S_HOM_G": 0.148614, "S_G": 0.192377, "step": 300, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 70.0, "EN": 0.98034, "GEO": 1.538403, "HOMA": -1.518743, "HOMA_TOTAL": -1.212844, "LDM_OFF": 0.750202, "LDM_DIAG": 1.408731, "LDM_FROB": 1.596034, "LDM_RMSD": 0.266006, "LDM_CT_PCT": -12.437222, "Q_FROB": 0.47777, "Q_RMSD": 0.087228, "Q_G": 0.084515, "S_HOM": 0.324603, "S_HOM_G": 0.145885, "S_G": 0.190337, "step": 350, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 70.0, "EN": 1.533064, "GEO": 1.277986, "HOMA": -1.811051, "HOMA_TOTAL": -1.212844, "LDM_OFF": 0.692776, "LDM_DIAG": 1.450663, "LDM_FROB": 1.607595, "LDM_RMSD": 0.267932, "LDM_CT_PCT": -15.205278, "Q_FROB": 0.422624, "Q_RMSD": 0.07716, "Q_G": 0.084515, "S_HOM": 0.296428, "S_HOM_G": 0.145885, "S_G": 0.190337, "step": 350, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 70.0, "EN": 0.615055, "GEO": 1.055325, "HOMA": -0.670381, "HOMA_TOTAL": -1.212844, "LDM_OFF": 0.924213, "LDM_DIAG": 1.762793, "LDM_FROB": 1.990379, "LDM_RMSD": 0.199038, "LDM_CT_PCT": -10.384167, "Q_FROB": 0.630178, "Q_RMSD": 0.066427, "Q_G": 0.084515, "S_HOM": 0.189013, "S_HOM_G": 0.145885, "S_G": 0.190337, "step": 350, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 80.0, "EN": 0.244383, "GEO": 0.75304, "HOMA": 0.002577, "HOMA_TOTAL": -0.692174, "LDM_OFF": 0.72958, "LDM_DIAG": 1.423557, "LDM_FROB": 1.599625, "LDM_RMSD": 0.266604, "LDM_CT_PCT": -12.283889, "Q_FROB": 0.470548, "Q_RMSD": 0.08591, "Q_G": 0.084536, "S_HOM": 0.32233, "S_HOM_G": 0.146112, "S_G": 0.190324, "step": 400, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 80.0, "EN": 1.44117, "GEO": 0.908709, "HOMA": -1.349879, "HOMA_TOTAL": -0.692174, "LDM_OFF": 0.679197, "LDM_DIAG": 1.441996, "LDM_FROB": 1.593945, "LDM_RMSD": 0.265657, "LDM_CT_PCT": -15.208333, "Q_FROB": 0.407399, "Q_RMSD": 0.07438, "Q_G": 0.084536, "S_HOM": 0.296422, "S_HOM_G": 0.146112, "S_G": 0.190324, "step": 400, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 80.0, "EN": 0.599733, "GEO": 1.114668, "HOMA": -0.714402, "HOMA_TOTAL": -0.692174, "LDM_OFF": 0.905206, "LDM_DIAG": 1.768999, "LDM_FROB": 1.987148, "LDM_RMSD": 0.198715, "LDM_CT_PCT": -10.366167, "Q_FROB": 0.617049, "Q_RMSD": 0.065043, "Q_G": 0.084536, "S_HOM": 0.189622, "S_HOM_G": 0.146112, "S_G": 0.190324, "step": 400, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 100.0, "EN": 1.661416, "GEO": 2.380739, "HOMA": -3.042155, "HOMA_TOTAL": -2.444163, "LDM_OFF": 0.763949, "LDM_DIAG": 1.392798, "LDM_FROB": 1.588554, "LDM_RMSD": 0.264759, "LDM_CT_PCT": -12.429722, "Q_FROB": 0.484019, "Q_RMSD": 0.088369, "Q_G": 0.083318, "S_HOM": 0.327345, "S_HOM_G": 0.147247, "S_G": 0.191574, "step": 500, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 100.0, "EN": 2.852146, "GEO": 1.622457, "HOMA": -3.474603, "HOMA_TOTAL": -2.444163, "LDM_OFF": 0.700109, "LDM_DIAG": 1.422191, "LDM_FROB": 1.585175, "LDM_RMSD": 0.264196, "LDM_CT_PCT": -15.161944, "Q_FROB": 0.418358, "Q_RMSD": 0.076381, "Q_G": 0.083318, "S_HOM": 0.301125, "S_HOM_G": 0.147247, "S_G": 0.191574, "step": 500, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 100.0, "EN": 1.122819, "GEO": 1.344286, "HOMA": -1.467105, "HOMA_TOTAL": -2.444163, "LDM_OFF": 0.936575, "LDM_DIAG": 1.736134, "LDM_FROB": 1.972646, "LDM_RMSD": 0.197265, "LDM_CT_PCT": -10.410333, "Q_FROB": 0.632975, "Q_RMSD": 0.066721, "Q_G": 0.083318, "S_HOM": 0.190417, "S_HOM_G": 0.147247, "S_G": 0.191574, "step": 500, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 120.0, "EN": 0.185197, "GEO": 0.737376, "HOMA": 0.077427, "HOMA_TOTAL": -1.551477, "LDM_OFF": 0.710671, "LDM_DIAG": 1.403125, "LDM_FROB": 1.572836, "LDM_RMSD": 0.262139, "LDM_CT_PCT": -12.047778, "Q_FROB": 0.455647, "Q_RMSD": 0.083189, "Q_G": 0.084295, "S_HOM": 0.325766, "S_HOM_G": 0.1467, "S_G": 0.190537, "step": 600, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 120.0, "EN": 2.368441, "GEO": 1.661675, "HOMA": -3.030116, "HOMA_TOTAL": -1.551477, "LDM_OFF": 0.688139, "LDM_DIAG": 1.393884, "LDM_FROB": 1.554493, "LDM_RMSD": 0.259082, "LDM_CT_PCT": -14.9475, "Q_FROB": 0.410863, "Q_RMSD": 0.075013, "Q_G": 0.084295, "S_HOM": 0.302362, "S_HOM_G": 0.1467, "S_G": 0.190537, "step": 600, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 120.0, "EN": 0.855062, "GEO": 1.786573, "HOMA": -1.641635, "HOMA_TOTAL": -1.551477, "LDM_OFF": 0.901749, "LDM_DIAG": 1.735516, "LDM_FROB": 1.955803, "LDM_RMSD": 0.19558, "LDM_CT_PCT": -10.248667, "Q_FROB": 0.610766, "Q_RMSD": 0.06438, "Q_G": 0.084295, "S_HOM": 0.190459, "S_HOM_G": 0.1467, "S_G": 0.190537, "step": 600, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 140.0, "EN": 0.692164, "GEO": 1.143543, "HOMA": -0.835707, "HOMA_TOTAL": -1.486294, "LDM_OFF": 0.740818, "LDM_DIAG": 1.407298, "LDM_FROB": 1.590377, "LDM_RMSD": 0.265063, "LDM_CT_PCT": -12.348889, "Q_FROB": 0.47341, "Q_RMSD": 0.086432, "Q_G": 0.083725, "S_HOM": 0.324747, "S_HOM_G": 0.146201, "S_G": 0.190855, "step": 700, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 140.0, "EN": 2.244048, "GEO": 1.212803, "HOMA": -2.456851, "HOMA_TOTAL": -1.486294, "LDM_OFF": 0.700184, "LDM_DIAG": 1.418697, "LDM_FROB": 1.582074, "LDM_RMSD": 0.263679, "LDM_CT_PCT": -15.03, "Q_FROB": 0.423682, "Q_RMSD": 0.077353, "Q_G": 0.083725, "S_HOM": 0.299298, "S_HOM_G": 0.146201, "S_G": 0.190855, "step": 700, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 140.0, "EN": 0.95682, "GEO": 1.33749, "HOMA": -1.29431, "HOMA_TOTAL": -1.486294, "LDM_OFF": 0.929022, "LDM_DIAG": 1.743319, "LDM_FROB": 1.975409, "LDM_RMSD": 0.197541, "LDM_CT_PCT": -10.401833, "Q_FROB": 0.630199, "Q_RMSD": 0.066429, "Q_G": 0.083725, "S_HOM": 0.188423, "S_HOM_G": 0.146201, "S_G": 0.190855, "step": 700, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 160.0, "EN": 0.649937, "GEO": 1.189759, "HOMA": -0.839696, "HOMA_TOTAL": -3.17583, "LDM_OFF": 0.730578, "LDM_DIAG": 1.40382, "LDM_FROB": 1.582547, "LDM_RMSD": 0.263758, "LDM_CT_PCT": -12.239444, "Q_FROB": 0.465743, "Q_RMSD": 0.085033, "Q_G": 0.083157, "S_HOM": 0.327101, "S_HOM_G": 0.147878, "S_G": 0.191509, "step": 800, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 160.0, "EN": 4.05528, "GEO": 2.690966, "HOMA": -5.746247, "HOMA_TOTAL": -3.17583, "LDM_OFF": 0.701881, "LDM_DIAG": 1.398787, "LDM_FROB": 1.565005, "LDM_RMSD": 0.260834, "LDM_CT_PCT": -15.208611, "Q_FROB": 0.411074, "Q_RMSD": 0.075051, "Q_G": 0.083157, "S_HOM": 0.304533, "S_HOM_G": 0.147878, "S_G": 0.191509, "step": 800, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 160.0, "EN": 1.487108, "GEO": 2.548151, "HOMA": -3.03526, "HOMA_TOTAL": -3.17583, "LDM_OFF": 0.920416, "LDM_DIAG": 1.730166, "LDM_FROB": 1.959755, "LDM_RMSD": 0.195976, "LDM_CT_PCT": -10.471, "Q_FROB": 0.616063, "Q_RMSD": 0.064939, "Q_G": 0.083157, "S_HOM": 0.190451, "S_HOM_G": 0.147878, "S_G": 0.191509, "step": 800, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 180.0, "EN": 0.398563, "GEO": 0.651243, "HOMA": -0.049806, "HOMA_TOTAL": -0.502188, "LDM_OFF": 0.706799, "LDM_DIAG": 1.405013, "LDM_FROB": 1.572777, "LDM_RMSD": 0.262129, "LDM_CT_PCT": -12.186389, "Q_FROB": 0.446653, "Q_RMSD": 0.081547, "Q_G": 0.084277, "S_HOM": 0.327187, "S_HOM_G": 0.146312, "S_G": 0.190732, "step": 900, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 180.0, "EN": 1.356691, "GEO": 0.72716, "HOMA": -1.083851, "HOMA_TOTAL": -0.502188, "LDM_OFF": 0.673842, "LDM_DIAG": 1.421487, "LDM_FROB": 1.573114, "LDM_RMSD": 0.262186, "LDM_CT_PCT": -14.9275, "Q_FROB": 0.404156, "Q_RMSD": 0.073788, "Q_G": 0.084277, "S_HOM": 0.298784, "S_HOM_G": 0.146312, "S_G": 0.190732, "step": 900, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 180.0, "EN": 0.601867, "GEO": 0.822752, "HOMA": -0.424618, "HOMA_TOTAL": -0.502188, "LDM_OFF": 0.888273, "LDM_DIAG": 1.749905, "LDM_FROB": 1.962447, "LDM_RMSD": 0.196245, "LDM_CT_PCT": -10.296667, "Q_FROB": 0.596407, "Q_RMSD": 0.062867, "Q_G": 0.084277, "S_HOM": 0.189322, "S_HOM_G": 0.146312, "S_G": 0.190732, "step": 900, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A (nitrobenzène)", "t": 198.0, "EN": 0.906723, "GEO": 1.718653, "HOMA": -1.625376, "HOMA_TOTAL": -1.583276, "LDM_OFF": 0.725623, "LDM_DIAG": 1.418277, "LDM_FROB": 1.593122, "LDM_RMSD": 0.26552, "LDM_CT_PCT": -12.414167, "Q_FROB": 0.456904, "Q_RMSD": 0.083419, "Q_G": 0.084146, "S_HOM": 0.328236, "S_HOM_G": 0.14633, "S_G": 0.190303, "step": 990, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "B (cycle en formation)", "t": 198.0, "EN": 2.438884, "GEO": 1.526247, "HOMA": -2.96513, "HOMA_TOTAL": -1.583276, "LDM_OFF": 0.700747, "LDM_DIAG": 1.431714, "LDM_FROB": 1.594004, "LDM_RMSD": 0.265667, "LDM_CT_PCT": -15.199167, "Q_FROB": 0.419829, "Q_RMSD": 0.07665, "Q_G": 0.084146, "S_HOM": 0.298758, "S_HOM_G": 0.14633, "S_G": 0.190303, "step": 990, "direction": "forward"}, {"molecule": "Diels-Alder exo (Nitrobenzène + butadiène)", "motif": "A+B (cycles fusionnés)", "t": 198.0, "EN": 0.707625, "GEO": 1.021278, "HOMA": -0.728903, "HOMA_TOTAL": -1.583276, "LDM_OFF": 0.910841, "LDM_DIAG": 1.757135, "LDM_FROB": 1.979181, "LDM_RMSD": 0.197918, "LDM_CT_PCT": -10.453, "Q_FROB": 0.612599, "Q_RMSD": 0.064574, "Q_G": 0.084146, "S_HOM": 0.188987, "S_HOM_G": 0.14633, "S_G": 0.190303, "step": 990, "direction": "forward"}];
+
+// =================== CONFIG ===================
+// Palette Okabe-Ito (adaptée daltoniens, recommandée Nature Methods 2011)
+const MOTIF_COLORS = {
+  "A (nitrobenzène)":       "#0072B2",  // bleu — cycle aromatique stable
+  "B (cycle en formation)": "#D55E00",  // vermillon — cycle Diels-Alder en formation
+  "A+B (cycles fusionnés)": "#009E73",  // vert bleuté — macrocycle fusionné
+};
+
+// Labels descripteurs : `label` = texte court (chip), `axis` = HTML pour titre axe Plotly
+// (Plotly accepte <i>, <sub>, <sup>, <br> dans les titres), `legend` = nom complet + unité
+const DESCRIPTORS = [
+  { key: "HOMA",       label: "HOMA",       axis: "<i>HOMA</i>",
+    legend: "HOMA (sans unité)",                     group: "aromaticité", default: true },
+  { key: "S_HOM",      label: "S-hom",      axis: "<i>S</i><sub>hom</sub>",
+    legend: "S-hom (sans unité)",                    group: "aromaticité", default: true },
+  { key: "S_HOM_G",    label: "S-hom(G)",   axis: "<i>S</i><sub>hom</sub>(<i>G</i>)",
+    legend: "S-hom(G) (sans unité)",                 group: "aromaticité", default: false },
+  { key: "EN",         label: "EN",         axis: "<i>EN</i>",
+    legend: "EN — composante électronique HOMA",     group: "HOMA comp.",  default: false },
+  { key: "GEO",        label: "GEO",        axis: "<i>GEO</i>",
+    legend: "GEO — composante géométrique HOMA",     group: "HOMA comp.",  default: false },
+  { key: "HOMA_TOTAL", label: "HOMA total", axis: "<i>HOMA</i><sub>total</sub>",
+    legend: "HOMA total (sans unité)",               group: "global",      default: false },
+  { key: "LDM_FROB",   label: "LDM Frob",   axis: "‖<i>LDM</i>‖<sub>F</sub>",
+    legend: "LDM ‖·‖ Frobenius (full matrix)",        group: "LDM brut",    default: true },
+  { key: "LDM_OFF",    label: "LDM Off",    axis: "<i>LDM</i><sub>off-diag</sub>",
+    legend: "LDM off-diagonal (sans unité)",         group: "LDM brut",    default: false },
+  { key: "LDM_DIAG",   label: "LDM Diag",   axis: "<i>LDM</i><sub>diag</sub>",
+    legend: "LDM diagonal (sans unité)",             group: "LDM brut",    default: false },
+  { key: "LDM_RMSD",   label: "LDM RMSD",   axis: "<i>LDM</i><sub>RMSD</sub>",
+    legend: "LDM RMSD (sans unité)",                 group: "LDM avancé",  default: false },
+  { key: "LDM_CT_PCT", label: "LDM CT %",   axis: "<i>LDM</i><sub>CT</sub> (%)",
+    legend: "LDM charge-transfer (%)",               group: "LDM avancé",  default: true },
+  { key: "Q_FROB",     label: "Q Frob",     axis: "<i>Q</i><sub>Frob</sub>",
+    legend: "Q Frobenius (sans unité)",              group: "LDM avancé",  default: false },
+  { key: "Q_RMSD",     label: "Q RMSD",     axis: "<i>Q</i><sub>RMSD</sub>",
+    legend: "Q RMSD (sans unité)",                   group: "LDM avancé",  default: false },
+  { key: "Q_G",        label: "Q(G)",       axis: "<i>Q</i>(<i>G</i>)",
+    legend: "Q(G) (sans unité)",                     group: "LDM avancé",  default: false },
+  { key: "S_G",        label: "S(G)",       axis: "<i>S</i>(<i>G</i>)",
+    legend: "S(G) (sans unité)",                     group: "LDM avancé",  default: false },
+];
+
+const SERIF = "STIX Two Text, STIX2Text-Regular, Latin Modern Roman, Times New Roman, Times, serif";
+
+// =================== ÉTAT ===================
+const state = {
+  activeMotifs: new Set(Object.keys(MOTIF_COLORS)),
+  activeDescriptors: new Set(DESCRIPTORS.filter(d => d.default).map(d => d.key)),
+  showMarkers: true,
+  showTSLine: true,
+  showZones: true,
+  showMinorGrid: false,
+};
+
+// =================== INIT UI ===================
+function initMotifChips() {
+  const cont = document.getElementById("motif-chips");
+  cont.innerHTML = "";
+  Object.entries(MOTIF_COLORS).forEach(([motif, color]) => {
+    const el = document.createElement("button");
+    el.className = "chip px-3 py-1.5 rounded-full text-sm font-medium border-2";
+    el.style.color = color;
+    el.style.borderColor = color;
+    el.style.background = "white";
+    el.textContent = motif;
+    el.dataset.motif = motif;
+    el.classList.add("chip-active");
+    el.addEventListener("click", () => {
+      if (state.activeMotifs.has(motif)) {
+        state.activeMotifs.delete(motif);
+        el.classList.remove("chip-active");
+        el.style.opacity = "0.35";
+      } else {
+        state.activeMotifs.add(motif);
+        el.classList.add("chip-active");
+        el.style.opacity = "1";
+      }
+      render();
+    });
+    cont.appendChild(el);
+  });
+}
+
+function initDescriptorGrid() {
+  const cont = document.getElementById("descriptor-grid");
+  cont.innerHTML = "";
+  DESCRIPTORS.forEach(d => {
+    const el = document.createElement("div");
+    el.className = "desc-card border rounded p-2 text-center select-none";
+    if (d.default) el.classList.add("desc-card-active");
+    el.innerHTML = `<div class="math text-base">${d.axis}</div>
+                    <div class="text-[10px] text-slate-500 mt-0.5">${d.group}</div>`;
+    el.addEventListener("click", () => {
+      if (state.activeDescriptors.has(d.key)) {
+        state.activeDescriptors.delete(d.key);
+        el.classList.remove("desc-card-active");
+      } else {
+        state.activeDescriptors.add(d.key);
+        el.classList.add("desc-card-active");
+      }
+      render();
+    });
+    cont.appendChild(el);
+  });
+}
+
+function initControls() {
+  document.getElementById("show-markers").addEventListener("change", e => {
+    state.showMarkers = e.target.checked; render();
+  });
+  document.getElementById("show-ts-line").addEventListener("change", e => {
+    state.showTSLine = e.target.checked; render();
+  });
+  document.getElementById("show-zones").addEventListener("change", e => {
+    state.showZones = e.target.checked; render();
+  });
+  document.getElementById("show-minor-grid").addEventListener("change", e => {
+    state.showMinorGrid = e.target.checked; render();
+  });
+  document.getElementById("reset-btn").addEventListener("click", () => {
+    state.activeMotifs = new Set(Object.keys(MOTIF_COLORS));
+    state.activeDescriptors = new Set(DESCRIPTORS.filter(d => d.default).map(d => d.key));
+    state.showMarkers = true; state.showTSLine = true; state.showZones = true;
+    state.showMinorGrid = false;
+    initMotifChips(); initDescriptorGrid();
+    document.getElementById("show-markers").checked = true;
+    document.getElementById("show-ts-line").checked = true;
+    document.getElementById("show-zones").checked = true;
+    document.getElementById("show-minor-grid").checked = false;
+    render();
+  });
+
+  // Export PNG rapide
+  document.getElementById("btn-export-png").addEventListener("click", () => {
+    const n = Math.max(1, state.activeDescriptors.size);
+    Plotly.downloadImage("plot", {
+      format: "png",
+      filename: autoFilename("png"),
+      width: 1600,
+      height: 320 * n + 120,
+      scale: 3,
+    });
+  });
+  // Export SVG rapide
+  document.getElementById("btn-export-svg").addEventListener("click", () => {
+    const n = Math.max(1, state.activeDescriptors.size);
+    Plotly.downloadImage("plot", {
+      format: "svg",
+      filename: autoFilename("svg"),
+      width: 1600,
+      height: 320 * n + 120,
+    });
+  });
+  // Modale Export configurable
+  const modal = document.getElementById("export-modal");
+  document.getElementById("btn-export-config").addEventListener("click", () => {
+    document.getElementById("exp-name").value = autoFilename("");
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+  });
+  document.getElementById("exp-cancel").addEventListener("click", () => {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+  document.getElementById("exp-go").addEventListener("click", () => {
+    const fmt   = document.getElementById("exp-format").value;
+    const unit  = document.getElementById("exp-unit").value;
+    const wVal  = parseFloat(document.getElementById("exp-width").value);
+    const hVal  = parseFloat(document.getElementById("exp-height").value);
+    const dpi   = parseFloat(document.getElementById("exp-dpi").value);
+    let   name  = (document.getElementById("exp-name").value || "figure").trim();
+    if (!name.toLowerCase().endsWith("." + fmt)) name += "." + fmt;
+    name = name.slice(0, -(fmt.length + 1));
+
+    const n = Math.max(1, state.activeDescriptors.size);
+    const pxPerUnit = unit === "mm" ? dpi / 25.4
+                    : unit === "in" ? dpi
+                    : 1;  // px
+    const totalW = Math.round(wVal * pxPerUnit);
+    const totalH = Math.round(hVal * n * pxPerUnit);
+    const scale  = unit === "px" ? Math.max(1, dpi / 96) : 1;
+
+    Plotly.downloadImage("plot", {
+      format: fmt,
+      filename: name,
+      width:  totalW,
+      height: totalH,
+      scale:  scale,
+    });
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+}
+
+function autoFilename(ext) {
+  const date = new Date().toISOString().slice(0, 10);
+  const descs = [...state.activeDescriptors].slice(0, 4).join("_");
+  const base = `DM_B2_exo_${date}_${descs || "vide"}`.replace(/[^A-Za-z0-9_\-]/g, "_");
+  return ext ? base + "." + ext : base;
+}
+
+// =================== TRACÉ ===================
+function groupByMotif(rows) {
+  const out = {};
+  rows.forEach(r => { (out[r.motif] = out[r.motif] || []).push(r); });
+  Object.values(out).forEach(arr => arr.sort((a, b) => a.t - b.t));
+  return out;
+}
+
+function render() {
+  const activeDesc = DESCRIPTORS.filter(d => state.activeDescriptors.has(d.key));
+  if (activeDesc.length === 0) {
+    Plotly.purge("plot");
+    document.getElementById("plot").innerHTML =
+      '<div class="text-center py-16 text-slate-400" style="font-family:var(--serif);font-style:italic;">'
+      + 'Sélectionne au moins un descripteur ci-dessus</div>';
+    renderTable();
+    return;
+  }
+
+  const grouped = groupByMotif(DATA);
+  const tMin = Math.min(...DATA.map(r => r.t));
+  const tMax = Math.max(...DATA.map(r => r.t));
+
+  // Une trace par (descripteur × motif). La légende n'affiche que la 1re série de chaque motif.
+  const traces = [];
+  activeDesc.forEach((desc, i) => {
+    const yAxis = i === 0 ? "y" : "y" + (i + 1);
+    state.activeMotifs.forEach(motif => {
+      const arr = grouped[motif] || [];
+      const xs    = arr.map(r => r.t);
+      const ys    = arr.map(r => r[desc.key]);
+      const steps = arr.map(r => r.step);
+      const dirs  = arr.map(r => r.direction);
+      traces.push({
+        x: xs, y: ys,
+        type: "scatter",
+        mode: state.showMarkers ? "lines+markers" : "lines",
+        name: motif,
+        legendgroup: motif,
+        showlegend: i === 0,
+        xaxis: "x",
+        yaxis: yAxis,
+        line:   { color: MOTIF_COLORS[motif], width: 2.5, shape: "linear" },
+        marker: { color: MOTIF_COLORS[motif], size: 7, line: { width: 0.8, color: "#ffffff" } },
+        hoverlabel: { font: { family: SERIF, size: 13 } },
+        hovertemplate:
+          `<b>${motif}</b><br>` +
+          `<i>${desc.label}</i> = %{y:.4f}<br>` +
+          `t = %{x:+.1f} fs<br>` +
+          `MD step = %{customdata[0]} (%{customdata[1]})` +
+          `<extra></extra>`,
+        customdata: steps.map((s, j) => [s, dirs[j]]),
+      });
+    });
+  });
+
+  // Layout multi-panneaux empilés
+  const n = activeDesc.length;
+  const gap = 0.055;                 // espace inter-panneaux (domaine)
+  const totalGap = gap * (n - 1);
+  const h = (1 - totalGap) / n;
+
+  // Légende horizontale, EN HAUT et hors plot → ne recouvre jamais les courbes
+  const layout = {
+    grid: { rows: n, columns: 1, pattern: "independent" },
+    height: Math.max(360 + 280 * n, 540),
+    margin: { l: 90, r: 40, t: 90, b: 80 },
+    hovermode: "closest",
+    font: { family: SERIF, size: 14, color: "#1e293b" },
+    legend: {
+      orientation: "h",
+      x: 0.5, xanchor: "center",
+      y: 1.04, yanchor: "bottom",
+      font: { family: SERIF, size: 14 },
+      bgcolor: "rgba(255,255,255,0)",
+      bordercolor: "rgba(0,0,0,0)",
+    },
+    plot_bgcolor: "#ffffff",
+    paper_bgcolor: "#ffffff",
+    shapes: [],
+    annotations: [],
+  };
+
+  activeDesc.forEach((desc, i) => {
+    const yKey   = i === 0 ? "yaxis" : "yaxis" + (i + 1);
+    const yRef   = i === 0 ? "y" : "y" + (i + 1);
+    const yDomTop = 1 - i * (h + gap);
+    const yDomBot = yDomTop - h;
+    layout[yKey] = {
+      title: {
+        text: desc.axis,
+        font: { family: SERIF, size: 16, color: "#0f172a" },
+        standoff: 12,
+      },
+      domain: [yDomBot, yDomTop],
+      gridcolor: "#e2e8f0",
+      gridwidth: 1,
+      zerolinecolor: "#94a3b8",
+      zerolinewidth: 1,
+      tickfont: { family: SERIF, size: 13, color: "#334155" },
+      ticks: "outside", ticklen: 5, tickwidth: 1, tickcolor: "#64748b",
+      showline: true, linewidth: 1, linecolor: "#334155", mirror: true,
+      automargin: true,
+      minor: state.showMinorGrid
+        ? { showgrid: true, gridcolor: "#f1f5f9", gridwidth: 0.5, ticklen: 3, tickcolor: "#94a3b8" }
+        : { showgrid: false },
+    };
+
+    // Ligne TS verticale par panneau
+    if (state.showTSLine) {
+      layout.shapes.push({
+        type: "line", x0: 0, x1: 0, xref: "x", yref: `${yRef} domain`,
+        y0: 0, y1: 1, line: { color: "#94a3b8", width: 1.5, dash: "dash" },
+        layer: "above",
+      });
+    }
+
+    // Zones colorées reverse / TS / forward — très discrètes
+    if (state.showZones) {
+      layout.shapes.push(
+        { type: "rect", xref: "x", yref: `${yRef} domain`,
+          x0: tMin - 5, x1: -6, y0: 0, y1: 1,
+          fillcolor: "#0072B2", opacity: 0.04, line: { width: 0 }, layer: "below" },
+        { type: "rect", xref: "x", yref: `${yRef} domain`,
+          x0: -6, x1: 6, y0: 0, y1: 1,
+          fillcolor: "#E69F00", opacity: 0.10, line: { width: 0 }, layer: "below" },
+        { type: "rect", xref: "x", yref: `${yRef} domain`,
+          x0: 6, x1: tMax + 5, y0: 0, y1: 1,
+          fillcolor: "#CC79A7", opacity: 0.04, line: { width: 0 }, layer: "below" },
+      );
+    }
+
+    // Annotation TS — seulement sur le panneau du haut, discrète (gris 60 %)
+    if (i === 0 && state.showTSLine) {
+      layout.annotations.push({
+        x: 0, y: 1.015, xref: "x", yref: `${yRef} domain`,
+        text: "TS", showarrow: false,
+        font: { color: "rgba(71,85,105,0.7)", size: 12, family: SERIF, style: "italic" },
+      });
+    }
+  });
+
+  // Axe X commun (ancré sur dernier panneau)
+  layout.xaxis = {
+    title: {
+      text: "Temps  <i>t</i>  (fs)  —  TS à <i>t</i> = 0  —  reverse ← | → forward",
+      font: { family: SERIF, size: 15, color: "#0f172a" },
+      standoff: 14,
+    },
+    range: [tMin - 5, tMax + 5],
+    gridcolor: "#e2e8f0",
+    gridwidth: 1,
+    zeroline: false,
+    tickfont: { family: SERIF, size: 13, color: "#334155" },
+    ticks: "outside", ticklen: 5, tickwidth: 1, tickcolor: "#64748b",
+    showline: true, linewidth: 1, linecolor: "#334155", mirror: true,
+    anchor: "y" + n,
+    automargin: true,
+    minor: state.showMinorGrid
+      ? { showgrid: true, gridcolor: "#f1f5f9", gridwidth: 0.5, ticklen: 3, tickcolor: "#94a3b8" }
+      : { showgrid: false },
+  };
+
+  // Petits axes X masqués pour chaque panneau intermédiaire (cosmétique)
+  for (let i = 1; i < n; i++) {
+    layout["xaxis" + (i + 1)] = {
+      matches: "x", showticklabels: false, showgrid: true, gridcolor: "#e2e8f0",
+      showline: true, linewidth: 1, linecolor: "#334155", mirror: true,
+      anchor: "y" + (i + 1),
+    };
+  }
+
+  const config = {
+    displaylogo: false,
+    responsive: true,
+    toImageButtonOptions: { format: "png", filename: autoFilename(""), scale: 3 },
+    modeBarButtonsToRemove: ["sendDataToCloud", "lasso2d", "select2d"],
+  };
+
+  Plotly.react("plot", traces, layout, config);
+  renderTable();
+}
+
+// =================== TABLEAU ===================
+const TBL_COLS = [
+  ["motif", "Motif"], ["t", "t (fs)"], ["step", "Step"], ["direction", "Dir"],
+  ["HOMA", "HOMA"], ["EN", "EN"], ["GEO", "GEO"], ["HOMA_TOTAL", "HOMA total"],
+  ["LDM_FROB", "LDM Frob"], ["LDM_OFF", "LDM Off"], ["LDM_DIAG", "LDM Diag"],
+  ["LDM_RMSD", "LDM RMSD"], ["LDM_CT_PCT", "LDM CT %"],
+  ["Q_FROB", "Q Frob"], ["Q_RMSD", "Q RMSD"], ["Q_G", "Q(G)"],
+  ["S_HOM", "S-hom"], ["S_HOM_G", "S-hom(G)"], ["S_G", "S(G)"],
+];
+
+function initTableHead() {
+  const tr = document.getElementById("tbl-head");
+  tr.innerHTML = TBL_COLS.map(c => `<th class="px-2 py-1 text-left">${c[1]}</th>`).join("");
+  const sel = document.getElementById("tbl-motif-filter");
+  Object.keys(MOTIF_COLORS).forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m; opt.textContent = m;
+    sel.appendChild(opt);
+  });
+  ["tbl-search", "tbl-motif-filter", "tbl-tmin", "tbl-tmax"].forEach(id =>
+    document.getElementById(id).addEventListener("input", renderTable));
+  document.getElementById("tbl-export").addEventListener("click", exportCSV);
+}
+
+function getFilteredRows() {
+  const q = document.getElementById("tbl-search").value.toLowerCase();
+  const motifFilter = document.getElementById("tbl-motif-filter").value;
+  const tmin = parseFloat(document.getElementById("tbl-tmin").value);
+  const tmax = parseFloat(document.getElementById("tbl-tmax").value);
+  return DATA.filter(r => {
+    if (motifFilter && r.motif !== motifFilter) return false;
+    if (!isNaN(tmin) && r.t < tmin) return false;
+    if (!isNaN(tmax) && r.t > tmax) return false;
+    if (q) {
+      const txt = `${r.motif} ${r.t} ${r.step} ${r.direction}`.toLowerCase();
+      if (!txt.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderTable() {
+  const rows = getFilteredRows().sort((a, b) => a.t - b.t || a.motif.localeCompare(b.motif));
+  const body = document.getElementById("tbl-body");
+  body.innerHTML = rows.map(r => {
+    const tds = TBL_COLS.map(([k]) => {
+      let v = r[k];
+      if (typeof v === "number") {
+        if (k === "t") v = v.toFixed(1);
+        else if (k === "step") v = String(v);
+        else v = v.toFixed(4);
+      }
+      let style = "";
+      if (k === "motif") style = `style="color:${MOTIF_COLORS[r.motif]};font-weight:600"`;
+      return `<td class="px-2 py-1" ${style}>${v ?? ""}</td>`;
+    }).join("");
+    return `<tr class="tbl-row">${tds}</tr>`;
+  }).join("");
+  document.getElementById("tbl-count").textContent =
+    `${rows.length} lignes affichées sur ${DATA.length} total`;
+}
+
+function exportCSV() {
+  const rows = getFilteredRows().sort((a, b) => a.t - b.t || a.motif.localeCompare(b.motif));
+  const sep = ",";
+  const head = TBL_COLS.map(c => c[1]).join(sep);
+  const body = rows.map(r => TBL_COLS.map(([k]) => {
+    const v = r[k];
+    if (typeof v === "string" && v.includes(sep)) return `"${v.replace(/"/g, '""')}"`;
+    return v ?? "";
+  }).join(sep)).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "DM_B2_descripteurs.csv";
+  a.click();
+}
+
+// =================== BOOT ===================
+initMotifChips();
+initDescriptorGrid();
+initControls();
+initTableHead();
+render();
+</script>
+</body>
+</html>
