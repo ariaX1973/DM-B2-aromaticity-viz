@@ -52,7 +52,26 @@ def load_data():
     for r in rows:
         r["step"] = int(round(abs(r["t"]) / 0.2))
         r["direction"] = "TS" if r["t"] == 0 else ("reverse" if r["t"] < 0 else "forward")
-    return rows
+
+    # Dédup à t=0 : le tableau contient 2 lignes par motif à t=0
+    # (frame 0 du run reverse + frame 0 du run forward, SP regénérés
+    # indépendamment → valeurs légèrement différentes). On ne garde
+    # que la 1re occurrence (TS issu du calcul reverse) pour rattacher
+    # le TS à la branche reverse uniquement.
+    seen = set()
+    deduped = []
+    dups = 0
+    for r in rows:
+        key = (r["motif"], r["t"])
+        if key in seen:
+            dups += 1
+            continue
+        seen.add(key)
+        deduped.append(r)
+    if dups:
+        print(f"  dédoublonnage : {dups} doublons (motif, t) supprimés "
+              f"(typiquement TS forward, géométrie identique au TS reverse)")
+    return deduped
 
 
 def build_html(rows):
