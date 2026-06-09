@@ -527,26 +527,21 @@ function render() {
   const tMin = Math.min(...DATA.map(r => r.t));
   const tMax = Math.max(...DATA.map(r => r.t));
 
-  // Deux traces par (descripteur × motif) : segment reverse (t<=0, inclut le TS)
-  // et segment forward (t>0, EXCLUT le TS) — rupture visuelle à t=0.
-  // Le TS est ainsi rattaché uniquement à la branche reverse (vers les réactifs).
+  // Une trace continue par (descripteur × motif) : reverse → TS (unique, du run
+  // reverse, gardé par dédup côté Python) → forward, sans rupture visuelle.
   const traces = [];
   activeDesc.forEach((desc, i) => {
     const yAxis = i === 0 ? "y" : "y" + (i + 1);
     state.activeMotifs.forEach(motif => {
-      const arr = grouped[motif] || [];
-      const arrRev = arr.filter(r => r.t <= 0);          // reverse + TS
-      const arrFwd = arr.filter(r => r.t > 0);           // forward sans TS
-
-      const mkTrace = (sub, isForward) => ({
-        x:      sub.map(r => r.t),
-        y:      sub.map(r => r[desc.key]),
+      const arr = grouped[motif] || [];   // déjà trié par t croissant
+      traces.push({
+        x:      arr.map(r => r.t),
+        y:      arr.map(r => r[desc.key]),
         type:   "scatter",
         mode:   state.showMarkers ? "lines+markers" : "lines",
         name:   motif,
         legendgroup: motif,
-        // La légende n'affiche qu'UNE entrée par motif : la branche reverse du 1er descripteur
-        showlegend: (i === 0 && !isForward),
+        showlegend: i === 0,
         xaxis:  "x",
         yaxis:  yAxis,
         line:   { color: MOTIF_COLORS[motif], width: 2.5, shape: "linear" },
@@ -558,11 +553,8 @@ function render() {
           `t = %{x:+.1f} fs<br>` +
           `MD step = %{customdata[0]} (%{customdata[1]})` +
           `<extra></extra>`,
-        customdata: sub.map(r => [r.step, r.direction]),
+        customdata: arr.map(r => [r.step, r.direction]),
       });
-
-      if (arrRev.length) traces.push(mkTrace(arrRev, false));
-      if (arrFwd.length) traces.push(mkTrace(arrFwd, true));
     });
   });
 
