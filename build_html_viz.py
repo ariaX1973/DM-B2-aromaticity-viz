@@ -1,18 +1,23 @@
 """
-Construit une visualisation HTML interactive standalone — qualité publication.
+Construit une visualisation HTML interactive standalone — qualité publication
+— version multi-températures.
 
-Source  : DM/B2/tableau_filled_v2.xlsx (feuille `endo`, contenu = exo, 132 lignes)
-Sortie  : DM/B2/viz_DM_B2.html (ouvrable hors ligne, Plotly + Tailwind via CDN)
+Source : un fichier xlsx par température MD, structure identique (feuille `endo`,
+18 colonnes), 3 motifs A / B / A+B.
 
-Caractéristiques publication :
-  - Typographie serif (STIX Two Text/Math via CDN, fallback Times New Roman)
-  - Labels math en italique avec indices (S_hom, Q_Frob, ...) via HTML inline
-  - Palette daltoniens Okabe-Ito (bleu, vermillon, vert bleuté)
-  - Tailles >= 14 pt axes / 12 pt ticks / 16 pt titres panneaux
-  - Lignes 2.5 pt, marqueurs 7 px, grilles claires, marges généreuses
-  - Boutons d'export PNG (scale configurable 3x/4x, 300 dpi), SVG vectoriel,
-    et modal de configuration figure (largeur mm/inch, format, nom de fichier auto)
-  - Aucun élément d'UI (chips, boutons, sélecteurs) n'apparaît dans l'export Plotly
+Pour ajouter une nouvelle température, ajouter une entrée à TEMPERATURES :
+    ("T15K", "tableau_filled_T15K.xlsx", "15"),
+    ("T35K", "tableau_filled_T35K.xlsx", "35"),
+
+Sortie : DM/B2/viz_DM_B2.html (ouvrable hors ligne, Plotly + Tailwind via CDN)
+
+Encodage visuel :
+  - Couleur = motif (palette Okabe-Ito, daltoniens)
+  - Dash    = température (solid / dash / dot / dashdot)
+  - Marker  = température (circle / square / diamond / triangle)
+  - Courbe MOYENNE (toggle) = ligne épaisse longdashdot + marker star
+    + bande ±écart-type semi-transparente, calculée sur les T actives
+    aux points temporels communs.
 """
 
 import json
@@ -20,16 +25,25 @@ from pathlib import Path
 import openpyxl
 
 HERE = Path(__file__).parent
-XLSX = HERE / "tableau_filled_v2.xlsx"
-OUT = HERE / "viz_DM_B2.html"
+OUT  = HERE / "viz_DM_B2.html"
+
+# (label, fichier xlsx, valeur K) — extensible
+TEMPERATURES = [
+    ("T5K",  "tableau_filled_T5K.xlsx",     "5"),
+    ("T50K", "tableau_filled_v2_T50K.xlsx", "50"),
+    # ("T15K", "tableau_filled_T15K.xlsx",   "15"),
+    # ("T35K", "tableau_filled_T35K.xlsx",   "35"),
+]
 
 
-def load_data():
-    wb = openpyxl.load_workbook(XLSX, data_only=True)
+def load_data_file(path: Path, T_label: str, T_kelvin: str):
+    wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb["endo"]
     rows = []
     for r in range(2, ws.max_row + 1):
         rows.append({
+            "T":           T_label,
+            "T_K":         T_kelvin,
             "molecule":    ws.cell(row=r, column=1).value,
             "motif":       ws.cell(row=r, column=2).value,
             "t":           float(ws.cell(row=r, column=3).value),
@@ -53,38 +67,43 @@ def load_data():
         r["step"] = int(round(abs(r["t"]) / 0.2))
         r["direction"] = "TS" if r["t"] == 0 else ("reverse" if r["t"] < 0 else "forward")
 
-    # Dédup à t=0 : le tableau contient 2 lignes par motif à t=0
-    # (frame 0 du run reverse + frame 0 du run forward, SP regénérés
-    # indépendamment → valeurs légèrement différentes). On ne garde
-    # que la 1re occurrence (TS issu du calcul reverse) pour rattacher
-    # le TS à la branche reverse uniquement.
-    seen = set()
-    deduped = []
-    dups = 0
+    # Dédup à t=0 : tableau contient 2 lignes par motif à t=0 (TS reverse + TS forward,
+    # SP regénérés indépendamment → valeurs légèrement différentes). On garde la 1re
+    # (TS issu du calcul reverse) → courbe continue traversant un seul point TS.
+    seen, deduped, dups = set(), [], 0
     for r in rows:
         key = (r["motif"], r["t"])
-        if key in seen:
-            dups += 1
-            continue
-        seen.add(key)
-        deduped.append(r)
-    if dups:
-        print(f"  dédoublonnage : {dups} doublons (motif, t) supprimés "
-              f"(typiquement TS forward, géométrie identique au TS reverse)")
+        if key in seen: dups += 1; continue
+        seen.add(key); deduped.append(r)
+    print(f"  {T_label}: {len(rows)} lignes -> {len(deduped)} apres dedup ({dups} doublons a t=0)")
     return deduped
 
 
-def build_html(rows):
-    data_json = json.dumps(rows, ensure_ascii=False)
+def load_all_data():
+    out = {}
+    avail = []
+    for label, fname, T_K in TEMPERATURES:
+        path = HERE / fname
+        if not path.exists():
+            print(f"  ! {fname} introuvable, {label} ignoré")
+            continue
+        out[label] = load_data_file(path, label, T_K)
+        avail.append((label, T_K))
+    return out, avail
+
+
+def build_html(data_by_T: dict, available_T: list):
+    data_json = json.dumps(data_by_T, ensure_ascii=False)
+    # Liste des T disponibles pour le header
+    T_list_human = ", ".join(f"T = {tK} K" for _, tK in available_T)
 
     html = r"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>DM B2 exo — Évolution temporelle des descripteurs d'aromaticité</title>
+<title>DM B2 exo — Évolution multi-températures des descripteurs d'aromaticité</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
-<!-- STIX Two : police serif scientifique standard (Computer Modern-like, support unicode math) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -101,35 +120,32 @@ def build_html(rows):
   .desc-card { transition: all 0.1s ease; cursor: pointer; }
   .desc-card:hover { background: #eff6ff; }
   .desc-card-active { background: #dbeafe; border-color: #2563eb; }
-  /* Pour les labels de descripteurs (chips et tableau) — police math */
   .math { font-family: var(--serif); font-style: italic; }
-  /* Modale */
   .modal-bg { background: rgba(15, 23, 42, 0.55); }
-  /* Force la police serif dans le rendu Plotly exporté */
   #plot text { font-family: var(--serif) !important; }
 </style>
 </head>
 <body class="bg-slate-100 min-h-screen">
 <div class="max-w-[1600px] mx-auto p-6 space-y-4">
 
-  <!-- En-tête : métadonnées -->
+  <!-- En-tête -->
   <header class="panel p-6">
     <h1 class="text-2xl font-bold text-slate-800" style="font-family:var(--serif);">
-      Évolution des descripteurs d'aromaticité — Diels-Alder exo (B2)
+      Évolution multi-températures des descripteurs d'aromaticité — Diels-Alder exo (B2)
     </h1>
     <div class="text-sm text-slate-600 mt-3 grid md:grid-cols-2 gap-x-8 gap-y-1.5">
       <div><span class="font-semibold text-slate-700">Système :</span>
            Nitrobenzène + 1,3-butadiène, voie exo</div>
-      <div><span class="font-semibold text-slate-700">Échantillonnage :</span>
-           44 frames × 3 motifs = <span class="font-mono">132 points</span></div>
+      <div><span class="font-semibold text-slate-700">Températures disponibles :</span>
+           <span id="hdr-temps">__T_LIST__</span></div>
       <div><span class="font-semibold text-slate-700">Dynamique moléculaire :</span>
-           B3LYP/6-31G(d), NVE, T = 50 K, depuis le TS</div>
+           B3LYP/6-31G(d), NVE, partant du TS</div>
       <div><span class="font-semibold text-slate-700">Pas MD :</span>
            dt = 0.2 fs, snapshot tous les 10 pas (2 fs)</div>
       <div><span class="font-semibold text-slate-700">Single-point électronique :</span>
-           wB97XD/6-311++G(d,p)</div>
+           ωB97X-D/6-311++G(d,p)</div>
       <div><span class="font-semibold text-slate-700">Analyse aromaticité :</span>
-           AroX.v0.2.0 (HOMA + LDM)</div>
+           AroX v0.2.0 (HOMA + LDM)</div>
     </div>
     <div class="flex flex-wrap gap-3 mt-4 text-xs">
       <span class="px-2.5 py-1 rounded bg-sky-100 text-sky-800 border border-sky-200">
@@ -144,13 +160,27 @@ def build_html(rows):
     </div>
   </header>
 
-  <!-- Contrôles : motifs + descripteurs + options + export -->
+  <!-- Contrôles -->
   <section class="panel p-5 space-y-4">
-    <div>
-      <div class="text-sm font-semibold text-slate-700 mb-2">
-        Motifs (cliquer pour activer/désactiver)
+    <div class="grid md:grid-cols-2 gap-5">
+      <div>
+        <div class="text-sm font-semibold text-slate-700 mb-2">
+          Températures (cliquer pour activer/désactiver)
+        </div>
+        <div id="temp-chips" class="flex gap-2 flex-wrap"></div>
+        <div class="text-[11px] text-slate-500 mt-1.5">
+          <i>Encodage : style de ligne = température (solid / dash / dot / dashdot).</i>
+        </div>
       </div>
-      <div id="motif-chips" class="flex gap-2 flex-wrap"></div>
+      <div>
+        <div class="text-sm font-semibold text-slate-700 mb-2">
+          Motifs (cliquer pour activer/désactiver)
+        </div>
+        <div id="motif-chips" class="flex gap-2 flex-wrap"></div>
+        <div class="text-[11px] text-slate-500 mt-1.5">
+          <i>Encodage : couleur = motif (palette Okabe-Ito, daltoniens).</i>
+        </div>
+      </div>
     </div>
 
     <div>
@@ -176,6 +206,14 @@ def build_html(rows):
       <label class="flex items-center gap-2 text-sm">
         <input type="checkbox" id="show-minor-grid" class="rounded">
         <span>Grille mineure</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm border-l pl-3 border-slate-300">
+        <input type="checkbox" id="show-mean" class="rounded">
+        <span><b>Moyenne sur les T actives</b> (par motif)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="show-std" class="rounded">
+        <span>Bande ±σ</span>
       </label>
 
       <div class="ml-auto flex items-center gap-2">
@@ -208,8 +246,11 @@ def build_html(rows):
   <section class="panel p-5">
     <div class="flex items-center gap-4 mb-3 flex-wrap">
       <h2 class="text-lg font-semibold text-slate-700">Données brutes</h2>
-      <input type="search" id="tbl-search" placeholder="Filtre texte (motif, temps...)"
+      <input type="search" id="tbl-search" placeholder="Filtre texte (motif, temps, T...)"
              class="border rounded px-3 py-1 text-sm flex-1 min-w-[200px]">
+      <select id="tbl-temp-filter" class="border rounded px-2 py-1 text-sm">
+        <option value="">Toutes T</option>
+      </select>
       <select id="tbl-motif-filter" class="border rounded px-2 py-1 text-sm">
         <option value="">Tous motifs</option>
       </select>
@@ -234,13 +275,10 @@ def build_html(rows):
         <tbody id="tbl-body"></tbody>
       </table>
     </div>
-    <div class="text-xs text-slate-500 mt-2">
-      <span id="tbl-count"></span>
-    </div>
+    <div class="text-xs text-slate-500 mt-2"><span id="tbl-count"></span></div>
   </section>
 
-  <footer class="text-xs text-slate-400 text-center pb-6 pt-2"
-          style="letter-spacing: 0.4em;">
+  <footer class="text-xs text-slate-400 text-center pb-6 pt-2" style="letter-spacing: 0.4em;">
     ARIA NOROOZI
   </footer>
 </div>
@@ -300,18 +338,25 @@ def build_html(rows):
 
 <script>
 // =================== DONNÉES ===================
+// DATA = { "T5K": [...rows], "T50K": [...rows], ... }
 const DATA = __DATA_PLACEHOLDER__;
 
 // =================== CONFIG ===================
-// Palette Okabe-Ito (adaptée daltoniens, recommandée Nature Methods 2011)
+// Couleur = motif (Okabe-Ito daltoniens)
 const MOTIF_COLORS = {
-  "A (nitrobenzène)":       "#0072B2",  // bleu — cycle aromatique stable
-  "B (cycle en formation)": "#D55E00",  // vermillon — cycle Diels-Alder en formation
-  "A+B (cycles fusionnés)": "#009E73",  // vert bleuté — macrocycle fusionné
+  "A (nitrobenzène)":       "#0072B2",
+  "B (cycle en formation)": "#D55E00",
+  "A+B (cycles fusionnés)": "#009E73",
 };
 
-// Labels descripteurs : `label` = texte court (chip), `axis` = HTML pour titre axe Plotly
-// (Plotly accepte <i>, <sub>, <sup>, <br> dans les titres), `legend` = nom complet + unité
+// Style de ligne + marker = température (extensible : 4 styles distincts dispo)
+const TEMP_STYLES = {
+  "T5K":  { chip: "#00B4D8", dash: "solid",   marker: "circle",     short: "5 K"  },
+  "T50K": { chip: "#E63946", dash: "dash",    marker: "square",     short: "50 K" },
+  "T15K": { chip: "#52B788", dash: "dot",     marker: "diamond",    short: "15 K" },
+  "T35K": { chip: "#9D4EDD", dash: "dashdot", marker: "triangle-up", short: "35 K" },
+};
+
 const DESCRIPTORS = [
   { key: "HOMA",       label: "HOMA",       axis: "<i>HOMA</i>",
     legend: "HOMA (sans unité)",                     group: "aromaticité", default: true },
@@ -346,18 +391,51 @@ const DESCRIPTORS = [
 ];
 
 const SERIF = "STIX Two Text, STIX2Text-Regular, Latin Modern Roman, Times New Roman, Times, serif";
+const T_KEYS = Object.keys(DATA);                       // températures disponibles
+const ALL_MOTIFS = Object.keys(MOTIF_COLORS);
 
 // =================== ÉTAT ===================
 const state = {
-  activeMotifs: new Set(Object.keys(MOTIF_COLORS)),
+  activeTemps:       new Set(T_KEYS),
+  activeMotifs:      new Set(ALL_MOTIFS),
   activeDescriptors: new Set(DESCRIPTORS.filter(d => d.default).map(d => d.key)),
-  showMarkers: true,
-  showTSLine: true,
-  showZones: true,
+  showMarkers:   true,
+  showTSLine:    true,
+  showZones:     true,
   showMinorGrid: false,
+  showMean:      false,
+  showStd:       false,
 };
 
 // =================== INIT UI ===================
+function initTempChips() {
+  const cont = document.getElementById("temp-chips");
+  cont.innerHTML = "";
+  T_KEYS.forEach(T => {
+    const style = TEMP_STYLES[T] || { chip: "#64748b", short: T };
+    const el = document.createElement("button");
+    el.className = "chip px-3 py-1.5 rounded-full text-sm font-medium border-2";
+    el.style.color = style.chip;
+    el.style.borderColor = style.chip;
+    el.style.background = "white";
+    el.textContent = T + "  (" + style.short + ")";
+    el.classList.add("chip-active");
+    el.addEventListener("click", () => {
+      if (state.activeTemps.has(T)) {
+        state.activeTemps.delete(T);
+        el.classList.remove("chip-active");
+        el.style.opacity = "0.35";
+      } else {
+        state.activeTemps.add(T);
+        el.classList.add("chip-active");
+        el.style.opacity = "1";
+      }
+      render();
+    });
+    cont.appendChild(el);
+  });
+}
+
 function initMotifChips() {
   const cont = document.getElementById("motif-chips");
   cont.innerHTML = "";
@@ -368,7 +446,6 @@ function initMotifChips() {
     el.style.borderColor = color;
     el.style.background = "white";
     el.textContent = motif;
-    el.dataset.motif = motif;
     el.classList.add("chip-active");
     el.addEventListener("click", () => {
       if (state.activeMotifs.has(motif)) {
@@ -410,62 +487,50 @@ function initDescriptorGrid() {
 }
 
 function initControls() {
-  document.getElementById("show-markers").addEventListener("change", e => {
-    state.showMarkers = e.target.checked; render();
+  const bind = (id, key) => document.getElementById(id).addEventListener("change", e => {
+    state[key] = e.target.checked; render();
   });
-  document.getElementById("show-ts-line").addEventListener("change", e => {
-    state.showTSLine = e.target.checked; render();
-  });
-  document.getElementById("show-zones").addEventListener("change", e => {
-    state.showZones = e.target.checked; render();
-  });
-  document.getElementById("show-minor-grid").addEventListener("change", e => {
-    state.showMinorGrid = e.target.checked; render();
-  });
+  bind("show-markers", "showMarkers");
+  bind("show-ts-line", "showTSLine");
+  bind("show-zones",   "showZones");
+  bind("show-minor-grid", "showMinorGrid");
+  bind("show-mean",    "showMean");
+  bind("show-std",     "showStd");
+
   document.getElementById("reset-btn").addEventListener("click", () => {
-    state.activeMotifs = new Set(Object.keys(MOTIF_COLORS));
+    state.activeTemps       = new Set(T_KEYS);
+    state.activeMotifs      = new Set(ALL_MOTIFS);
     state.activeDescriptors = new Set(DESCRIPTORS.filter(d => d.default).map(d => d.key));
-    state.showMarkers = true; state.showTSLine = true; state.showZones = true;
-    state.showMinorGrid = false;
-    initMotifChips(); initDescriptorGrid();
-    document.getElementById("show-markers").checked = true;
-    document.getElementById("show-ts-line").checked = true;
-    document.getElementById("show-zones").checked = true;
-    document.getElementById("show-minor-grid").checked = false;
+    Object.assign(state, { showMarkers: true, showTSLine: true, showZones: true,
+                           showMinorGrid: false, showMean: false, showStd: false });
+    initTempChips(); initMotifChips(); initDescriptorGrid();
+    ["show-markers","show-ts-line","show-zones"].forEach(id =>
+      document.getElementById(id).checked = true);
+    ["show-minor-grid","show-mean","show-std"].forEach(id =>
+      document.getElementById(id).checked = false);
     render();
   });
 
-  // Export PNG rapide
+  // Export PNG
   document.getElementById("btn-export-png").addEventListener("click", () => {
     const n = Math.max(1, state.activeDescriptors.size);
-    Plotly.downloadImage("plot", {
-      format: "png",
-      filename: autoFilename("png"),
-      width: 1600,
-      height: 320 * n + 120,
-      scale: 3,
-    });
+    Plotly.downloadImage("plot", { format: "png", filename: autoFilename("png"),
+      width: 1600, height: 320 * n + 120, scale: 3 });
   });
-  // Export SVG rapide
+  // Export SVG
   document.getElementById("btn-export-svg").addEventListener("click", () => {
     const n = Math.max(1, state.activeDescriptors.size);
-    Plotly.downloadImage("plot", {
-      format: "svg",
-      filename: autoFilename("svg"),
-      width: 1600,
-      height: 320 * n + 120,
-    });
+    Plotly.downloadImage("plot", { format: "svg", filename: autoFilename("svg"),
+      width: 1600, height: 320 * n + 120 });
   });
-  // Modale Export configurable
+  // Modale Export
   const modal = document.getElementById("export-modal");
   document.getElementById("btn-export-config").addEventListener("click", () => {
     document.getElementById("exp-name").value = autoFilename("");
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
+    modal.classList.remove("hidden"); modal.classList.add("flex");
   });
   document.getElementById("exp-cancel").addEventListener("click", () => {
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
+    modal.classList.add("hidden"); modal.classList.remove("flex");
   });
   document.getElementById("exp-go").addEventListener("click", () => {
     const fmt   = document.getElementById("exp-format").value;
@@ -474,110 +539,189 @@ function initControls() {
     const hVal  = parseFloat(document.getElementById("exp-height").value);
     const dpi   = parseFloat(document.getElementById("exp-dpi").value);
     let   name  = (document.getElementById("exp-name").value || "figure").trim();
-    if (!name.toLowerCase().endsWith("." + fmt)) name += "." + fmt;
-    name = name.slice(0, -(fmt.length + 1));
+    if (name.toLowerCase().endsWith("." + fmt)) name = name.slice(0, -(fmt.length + 1));
 
     const n = Math.max(1, state.activeDescriptors.size);
-    const pxPerUnit = unit === "mm" ? dpi / 25.4
-                    : unit === "in" ? dpi
-                    : 1;  // px
+    const pxPerUnit = unit === "mm" ? dpi / 25.4 : unit === "in" ? dpi : 1;
     const totalW = Math.round(wVal * pxPerUnit);
     const totalH = Math.round(hVal * n * pxPerUnit);
     const scale  = unit === "px" ? Math.max(1, dpi / 96) : 1;
 
-    Plotly.downloadImage("plot", {
-      format: fmt,
-      filename: name,
-      width:  totalW,
-      height: totalH,
-      scale:  scale,
-    });
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
+    Plotly.downloadImage("plot", { format: fmt, filename: name,
+      width: totalW, height: totalH, scale: scale });
+    modal.classList.add("hidden"); modal.classList.remove("flex");
   });
 }
 
 function autoFilename(ext) {
   const date = new Date().toISOString().slice(0, 10);
-  const descs = [...state.activeDescriptors].slice(0, 4).join("_");
-  const base = `DM_B2_exo_${date}_${descs || "vide"}`.replace(/[^A-Za-z0-9_\-]/g, "_");
+  const Ts = [...state.activeTemps].join("-");
+  const descs = [...state.activeDescriptors].slice(0, 3).join("_");
+  const base = `DM_B2_exo_${date}_${Ts}_${descs || "vide"}`.replace(/[^A-Za-z0-9_\-]/g, "_");
   return ext ? base + "." + ext : base;
 }
 
-// =================== TRACÉ ===================
-function groupByMotif(rows) {
+// =================== HELPERS DATA ===================
+function rowsByMotif(rows) {
   const out = {};
   rows.forEach(r => { (out[r.motif] = out[r.motif] || []).push(r); });
   Object.values(out).forEach(arr => arr.sort((a, b) => a.t - b.t));
   return out;
 }
 
+// Pour la moyenne : pour chaque motif, retourne { ts: [...], mean: [...], std: [...] }
+// calculé aux points temporels EXACTS partagés par TOUTES les T actives.
+function computeMeanPerMotif(motif, descKey) {
+  const Ts = [...state.activeTemps];
+  if (Ts.length < 1) return null;
+  // Map: T → (Map: t → value)
+  const perT = {};
+  Ts.forEach(T => {
+    perT[T] = new Map();
+    (DATA[T] || []).filter(r => r.motif === motif).forEach(r => {
+      perT[T].set(r.t, r[descKey]);
+    });
+  });
+  // Points communs : intersection des keys
+  const refTs = [...perT[Ts[0]].keys()];
+  const commonTs = refTs.filter(t => Ts.every(T => perT[T].has(t)))
+                        .sort((a, b) => a - b);
+  if (commonTs.length === 0) return null;
+  const means = [], stds = [];
+  commonTs.forEach(t => {
+    const vals = Ts.map(T => perT[T].get(t));
+    const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const v = vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length;
+    means.push(m); stds.push(Math.sqrt(v));
+  });
+  return { ts: commonTs, mean: means, std: stds };
+}
+
+// =================== TRACÉ ===================
 function render() {
   const activeDesc = DESCRIPTORS.filter(d => state.activeDescriptors.has(d.key));
-  if (activeDesc.length === 0) {
+  if (activeDesc.length === 0 || state.activeTemps.size === 0) {
     Plotly.purge("plot");
     document.getElementById("plot").innerHTML =
       '<div class="text-center py-16 text-slate-400" style="font-family:var(--serif);font-style:italic;">'
-      + 'Sélectionne au moins un descripteur ci-dessus</div>';
+      + 'Sélectionne au moins une température et un descripteur</div>';
     renderTable();
     return;
   }
 
-  const grouped = groupByMotif(DATA);
-  const tMin = Math.min(...DATA.map(r => r.t));
-  const tMax = Math.max(...DATA.map(r => r.t));
+  // Bornes temporelles globales (toutes T)
+  const allRows = [].concat(...Object.values(DATA));
+  const tMin = Math.min(...allRows.map(r => r.t));
+  const tMax = Math.max(...allRows.map(r => r.t));
 
-  // Une trace continue par (descripteur × motif) : reverse → TS (unique, du run
-  // reverse, gardé par dédup côté Python) → forward, sans rupture visuelle.
   const traces = [];
+
   activeDesc.forEach((desc, i) => {
     const yAxis = i === 0 ? "y" : "y" + (i + 1);
-    state.activeMotifs.forEach(motif => {
-      const arr = grouped[motif] || [];   // déjà trié par t croissant
-      traces.push({
-        x:      arr.map(r => r.t),
-        y:      arr.map(r => r[desc.key]),
-        type:   "scatter",
-        mode:   state.showMarkers ? "lines+markers" : "lines",
-        name:   motif,
-        legendgroup: motif,
-        showlegend: i === 0,
-        xaxis:  "x",
-        yaxis:  yAxis,
-        line:   { color: MOTIF_COLORS[motif], width: 2.5, shape: "linear" },
-        marker: { color: MOTIF_COLORS[motif], size: 7, line: { width: 0.8, color: "#ffffff" } },
-        hoverlabel: { font: { family: SERIF, size: 13 } },
-        hovertemplate:
-          `<b>${motif}</b><br>` +
-          `<i>${desc.label}</i> = %{y:.4f}<br>` +
-          `t = %{x:+.1f} fs<br>` +
-          `MD step = %{customdata[0]} (%{customdata[1]})` +
-          `<extra></extra>`,
-        customdata: arr.map(r => [r.step, r.direction]),
+
+    // 1) Une trace par (T active × motif actif) : couleur=motif, dash+marker=T
+    state.activeTemps.forEach(T => {
+      const style  = TEMP_STYLES[T] || { dash: "solid", marker: "circle", short: T };
+      const grouped = rowsByMotif(DATA[T] || []);
+      state.activeMotifs.forEach(motif => {
+        const arr = grouped[motif] || [];
+        if (arr.length === 0) return;
+        traces.push({
+          x:      arr.map(r => r.t),
+          y:      arr.map(r => r[desc.key]),
+          type:   "scatter",
+          mode:   state.showMarkers ? "lines+markers" : "lines",
+          name:   `${motif} — ${style.short}`,
+          legendgroup: `${motif}__${T}`,
+          showlegend: i === 0,
+          xaxis:  "x",
+          yaxis:  yAxis,
+          line:   { color: MOTIF_COLORS[motif], width: 2.2, dash: style.dash, shape: "linear" },
+          marker: { color: MOTIF_COLORS[motif], size: 6.5, symbol: style.marker,
+                    line: { width: 0.7, color: "#ffffff" } },
+          hoverlabel: { font: { family: SERIF, size: 13 } },
+          hovertemplate:
+            `<b>${motif}</b>  ·  <b>${style.short}</b><br>` +
+            `<i>${desc.label}</i> = %{y:.4f}<br>` +
+            `t = %{x:+.1f} fs<br>` +
+            `MD step = %{customdata[0]} (%{customdata[1]})` +
+            `<extra></extra>`,
+          customdata: arr.map(r => [r.step, r.direction]),
+        });
       });
     });
+
+    // 2) Courbes MOYENNE (par motif, sur les T actives) + bande ±σ
+    if (state.showMean && state.activeTemps.size >= 1) {
+      state.activeMotifs.forEach(motif => {
+        const m = computeMeanPerMotif(motif, desc.key);
+        if (!m) return;
+        const color = MOTIF_COLORS[motif];
+
+        // Bande ±σ (deux traces fill='tonexty') — uniquement si ≥ 2 T actives
+        if (state.showStd && state.activeTemps.size >= 2) {
+          const upper = m.mean.map((v, k) => v + m.std[k]);
+          const lower = m.mean.map((v, k) => v - m.std[k]);
+          traces.push({
+            x: m.ts, y: upper,
+            type: "scatter", mode: "lines",
+            xaxis: "x", yaxis: yAxis,
+            line: { color: color, width: 0 },
+            hoverinfo: "skip", showlegend: false,
+            legendgroup: `mean__${motif}`,
+          });
+          traces.push({
+            x: m.ts, y: lower,
+            type: "scatter", mode: "lines",
+            xaxis: "x", yaxis: yAxis,
+            line: { color: color, width: 0 },
+            fill: "tonexty", fillcolor: hexToRgba(color, 0.13),
+            hoverinfo: "skip", showlegend: false,
+            legendgroup: `mean__${motif}`,
+          });
+        }
+
+        // Courbe moyenne — ligne épaisse longdashdot + marker star
+        traces.push({
+          x: m.ts, y: m.mean,
+          type: "scatter",
+          mode: state.showMarkers ? "lines+markers" : "lines",
+          name: `⟨${motif}⟩ moyenne`,
+          legendgroup: `mean__${motif}`,
+          showlegend: i === 0,
+          xaxis: "x", yaxis: yAxis,
+          line:   { color: color, width: 3.5, dash: "longdashdot" },
+          marker: { color: color, size: 9, symbol: "star",
+                    line: { width: 1.2, color: "#1e293b" } },
+          hoverlabel: { font: { family: SERIF, size: 13 } },
+          hovertemplate:
+            `<b>⟨${motif}⟩</b>  moyenne sur ${state.activeTemps.size} T<br>` +
+            `<i>${desc.label}</i> = %{y:.4f} ± %{customdata:.4f}<br>` +
+            `t = %{x:+.1f} fs<extra></extra>`,
+          customdata: m.std,
+        });
+      });
+    }
   });
 
-  // Layout multi-panneaux empilés
+  // Layout
   const n = activeDesc.length;
-  const gap = 0.055;                 // espace inter-panneaux (domaine)
+  const gap = 0.055;
   const totalGap = gap * (n - 1);
   const h = (1 - totalGap) / n;
-
-  // Légende horizontale, EN HAUT et hors plot → ne recouvre jamais les courbes
   const layout = {
     grid: { rows: n, columns: 1, pattern: "independent" },
-    height: Math.max(360 + 280 * n, 540),
-    margin: { l: 90, r: 40, t: 90, b: 80 },
+    height: Math.max(360 + 300 * n, 540),
+    margin: { l: 90, r: 40, t: 110, b: 80 },
     hovermode: "closest",
     font: { family: SERIF, size: 14, color: "#1e293b" },
     legend: {
       orientation: "h",
       x: 0.5, xanchor: "center",
       y: 1.04, yanchor: "bottom",
-      font: { family: SERIF, size: 14 },
-      bgcolor: "rgba(255,255,255,0)",
-      bordercolor: "rgba(0,0,0,0)",
+      font: { family: SERIF, size: 13 },
+      bgcolor: "rgba(255,255,255,0)", bordercolor: "rgba(0,0,0,0)",
+      itemwidth: 30,
     },
     plot_bgcolor: "#ffffff",
     paper_bgcolor: "#ffffff",
@@ -591,16 +735,10 @@ function render() {
     const yDomTop = 1 - i * (h + gap);
     const yDomBot = yDomTop - h;
     layout[yKey] = {
-      title: {
-        text: desc.axis,
-        font: { family: SERIF, size: 16, color: "#0f172a" },
-        standoff: 12,
-      },
+      title: { text: desc.axis, font: { family: SERIF, size: 16, color: "#0f172a" }, standoff: 12 },
       domain: [yDomBot, yDomTop],
-      gridcolor: "#e2e8f0",
-      gridwidth: 1,
-      zerolinecolor: "#94a3b8",
-      zerolinewidth: 1,
+      gridcolor: "#e2e8f0", gridwidth: 1,
+      zerolinecolor: "#94a3b8", zerolinewidth: 1,
       tickfont: { family: SERIF, size: 13, color: "#334155" },
       ticks: "outside", ticklen: 5, tickwidth: 1, tickcolor: "#64748b",
       showline: true, linewidth: 1, linecolor: "#334155", mirror: true,
@@ -610,16 +748,13 @@ function render() {
         : { showgrid: false },
     };
 
-    // Ligne TS verticale par panneau
     if (state.showTSLine) {
       layout.shapes.push({
         type: "line", x0: 0, x1: 0, xref: "x", yref: `${yRef} domain`,
-        y0: 0, y1: 1, line: { color: "#94a3b8", width: 1.5, dash: "dash" },
-        layer: "above",
+        y0: 0, y1: 1, line: { color: "#94a3b8", width: 1.5, dash: "dash" }, layer: "above",
       });
     }
 
-    // Zones colorées reverse / TS / forward — très discrètes
     if (state.showZones) {
       layout.shapes.push(
         { type: "rect", xref: "x", yref: `${yRef} domain`,
@@ -634,7 +769,6 @@ function render() {
       );
     }
 
-    // Annotation TS — seulement sur le panneau du haut, discrète (gris 60 %)
     if (i === 0 && state.showTSLine) {
       layout.annotations.push({
         x: 0, y: 1.015, xref: "x", yref: `${yRef} domain`,
@@ -644,28 +778,21 @@ function render() {
     }
   });
 
-  // Axe X commun (ancré sur dernier panneau)
   layout.xaxis = {
     title: {
       text: "Temps  <i>t</i>  (fs)  —  TS à <i>t</i> = 0  —  reverse ← | → forward",
-      font: { family: SERIF, size: 15, color: "#0f172a" },
-      standoff: 14,
+      font: { family: SERIF, size: 15, color: "#0f172a" }, standoff: 14,
     },
     range: [tMin - 5, tMax + 5],
-    gridcolor: "#e2e8f0",
-    gridwidth: 1,
-    zeroline: false,
+    gridcolor: "#e2e8f0", gridwidth: 1, zeroline: false,
     tickfont: { family: SERIF, size: 13, color: "#334155" },
     ticks: "outside", ticklen: 5, tickwidth: 1, tickcolor: "#64748b",
     showline: true, linewidth: 1, linecolor: "#334155", mirror: true,
-    anchor: "y" + n,
-    automargin: true,
+    anchor: "y" + n, automargin: true,
     minor: state.showMinorGrid
       ? { showgrid: true, gridcolor: "#f1f5f9", gridwidth: 0.5, ticklen: 3, tickcolor: "#94a3b8" }
       : { showgrid: false },
   };
-
-  // Petits axes X masqués pour chaque panneau intermédiaire (cosmétique)
   for (let i = 1; i < n; i++) {
     layout["xaxis" + (i + 1)] = {
       matches: "x", showticklabels: false, showgrid: true, gridcolor: "#e2e8f0",
@@ -675,8 +802,7 @@ function render() {
   }
 
   const config = {
-    displaylogo: false,
-    responsive: true,
+    displaylogo: false, responsive: true,
     toImageButtonOptions: { format: "png", filename: autoFilename(""), scale: 3 },
     modeBarButtonsToRemove: ["sendDataToCloud", "lasso2d", "select2d"],
   };
@@ -685,9 +811,16 @@ function render() {
   renderTable();
 }
 
+function hexToRgba(hex, alpha) {
+  const m = hex.replace("#", "");
+  const n = parseInt(m, 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // =================== TABLEAU ===================
 const TBL_COLS = [
-  ["motif", "Motif"], ["t", "t (fs)"], ["step", "Step"], ["direction", "Dir"],
+  ["T", "T (K)"], ["motif", "Motif"], ["t", "t (fs)"], ["step", "Step"], ["direction", "Dir"],
   ["HOMA", "HOMA"], ["EN", "EN"], ["GEO", "GEO"], ["HOMA_TOTAL", "HOMA total"],
   ["LDM_FROB", "LDM Frob"], ["LDM_OFF", "LDM Off"], ["LDM_DIAG", "LDM Diag"],
   ["LDM_RMSD", "LDM RMSD"], ["LDM_CT_PCT", "LDM CT %"],
@@ -695,31 +828,44 @@ const TBL_COLS = [
   ["S_HOM", "S-hom"], ["S_HOM_G", "S-hom(G)"], ["S_G", "S(G)"],
 ];
 
+function getAllRows() {
+  return [].concat(...T_KEYS.map(T => (DATA[T] || []).map(r => ({ ...r }))));
+}
+const ALL_ROWS_FLAT = getAllRows();
+
 function initTableHead() {
   const tr = document.getElementById("tbl-head");
   tr.innerHTML = TBL_COLS.map(c => `<th class="px-2 py-1 text-left">${c[1]}</th>`).join("");
-  const sel = document.getElementById("tbl-motif-filter");
+  const selT = document.getElementById("tbl-temp-filter");
+  T_KEYS.forEach(T => {
+    const opt = document.createElement("option");
+    opt.value = T; opt.textContent = T + " (" + (TEMP_STYLES[T]?.short || T) + ")";
+    selT.appendChild(opt);
+  });
+  const selM = document.getElementById("tbl-motif-filter");
   Object.keys(MOTIF_COLORS).forEach(m => {
     const opt = document.createElement("option");
     opt.value = m; opt.textContent = m;
-    sel.appendChild(opt);
+    selM.appendChild(opt);
   });
-  ["tbl-search", "tbl-motif-filter", "tbl-tmin", "tbl-tmax"].forEach(id =>
+  ["tbl-search","tbl-temp-filter","tbl-motif-filter","tbl-tmin","tbl-tmax"].forEach(id =>
     document.getElementById(id).addEventListener("input", renderTable));
   document.getElementById("tbl-export").addEventListener("click", exportCSV);
 }
 
 function getFilteredRows() {
   const q = document.getElementById("tbl-search").value.toLowerCase();
+  const Tf = document.getElementById("tbl-temp-filter").value;
   const motifFilter = document.getElementById("tbl-motif-filter").value;
   const tmin = parseFloat(document.getElementById("tbl-tmin").value);
   const tmax = parseFloat(document.getElementById("tbl-tmax").value);
-  return DATA.filter(r => {
+  return ALL_ROWS_FLAT.filter(r => {
+    if (Tf && r.T !== Tf) return false;
     if (motifFilter && r.motif !== motifFilter) return false;
     if (!isNaN(tmin) && r.t < tmin) return false;
     if (!isNaN(tmax) && r.t > tmax) return false;
     if (q) {
-      const txt = `${r.motif} ${r.t} ${r.step} ${r.direction}`.toLowerCase();
+      const txt = `${r.T} ${r.T_K} ${r.motif} ${r.t} ${r.step} ${r.direction}`.toLowerCase();
       if (!txt.includes(q)) return false;
     }
     return true;
@@ -727,43 +873,49 @@ function getFilteredRows() {
 }
 
 function renderTable() {
-  const rows = getFilteredRows().sort((a, b) => a.t - b.t || a.motif.localeCompare(b.motif));
+  const rows = getFilteredRows().sort((a, b) =>
+    a.T.localeCompare(b.T) || a.t - b.t || a.motif.localeCompare(b.motif));
   const body = document.getElementById("tbl-body");
   body.innerHTML = rows.map(r => {
     const tds = TBL_COLS.map(([k]) => {
       let v = r[k];
-      if (typeof v === "number") {
+      if (k === "T") v = (TEMP_STYLES[r.T]?.short) || r.T_K;
+      else if (typeof v === "number") {
         if (k === "t") v = v.toFixed(1);
         else if (k === "step") v = String(v);
         else v = v.toFixed(4);
       }
       let style = "";
       if (k === "motif") style = `style="color:${MOTIF_COLORS[r.motif]};font-weight:600"`;
+      if (k === "T")     style = `style="color:${TEMP_STYLES[r.T]?.chip || '#64748b'};font-weight:600"`;
       return `<td class="px-2 py-1" ${style}>${v ?? ""}</td>`;
     }).join("");
     return `<tr class="tbl-row">${tds}</tr>`;
   }).join("");
   document.getElementById("tbl-count").textContent =
-    `${rows.length} lignes affichées sur ${DATA.length} total`;
+    `${rows.length} lignes affichées sur ${ALL_ROWS_FLAT.length} total`;
 }
 
 function exportCSV() {
-  const rows = getFilteredRows().sort((a, b) => a.t - b.t || a.motif.localeCompare(b.motif));
+  const rows = getFilteredRows().sort((a, b) =>
+    a.T.localeCompare(b.T) || a.t - b.t || a.motif.localeCompare(b.motif));
   const sep = ",";
   const head = TBL_COLS.map(c => c[1]).join(sep);
   const body = rows.map(r => TBL_COLS.map(([k]) => {
-    const v = r[k];
+    let v = r[k];
+    if (k === "T") v = r.T_K;
     if (typeof v === "string" && v.includes(sep)) return `"${v.replace(/"/g, '""')}"`;
     return v ?? "";
   }).join(sep)).join("\n");
   const blob = new Blob([head + "\n" + body], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "DM_B2_descripteurs.csv";
+  a.download = "DM_B2_descripteurs_multiT.csv";
   a.click();
 }
 
 // =================== BOOT ===================
+initTempChips();
 initMotifChips();
 initDescriptorGrid();
 initControls();
@@ -775,17 +927,19 @@ render();
 """
 
     html = html.replace("__DATA_PLACEHOLDER__", data_json)
+    html = html.replace("__T_LIST__", T_list_human)
     return html
 
 
 def main():
-    rows = load_data()
-    print(f"Chargé {len(rows)} lignes depuis {XLSX.name}")
-    html = build_html(rows)
+    print("Chargement des fichiers température…")
+    data, available = load_all_data()
+    total = sum(len(v) for v in data.values())
+    print(f"Total : {total} lignes ({len(data)} température(s) : {', '.join(data.keys())})")
+    html = build_html(data, available)
     OUT.write_text(html, encoding="utf-8")
     print(f"Visualisation HTML écrite : {OUT}")
     print(f"  taille : {OUT.stat().st_size / 1024:.1f} KB")
-    print(f"  -> ouvre dans un navigateur (double-clic)")
 
 
 if __name__ == "__main__":
