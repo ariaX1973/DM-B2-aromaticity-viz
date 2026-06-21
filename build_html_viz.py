@@ -31,7 +31,7 @@ OUT  = HERE / "viz_DM_B2.html"
 TEMPERATURES = [
     ("T5K",  "tableau_filled_T5K.xlsx",     "5"),
     ("T50K", "tableau_filled_v2_T50K.xlsx", "50"),
-    # ("T15K", "tableau_filled_T15K.xlsx",   "15"),
+    ("T15K", "tableau_filled_T15K.xlsx",    "15"),
     # ("T35K", "tableau_filled_T35K.xlsx",   "35"),
 ]
 

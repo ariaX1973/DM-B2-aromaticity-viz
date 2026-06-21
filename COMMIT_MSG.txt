@@ -1,0 +1,14 @@
+Activation T15K : 3e temperature disponible
+
+- Decommente l'entree T15K dans la liste TEMPERATURES de build_html_viz.py
+- Ajout du fichier tableau_filled_T15K.xlsx (108 lignes, 36 frames, +/-118 fs)
+- HTML regenere : 339 lignes au total (105+129+105 apres dedup TS)
+
+Encodage visuel T15K : style "dot" + marker "diamond" + chip vert sarcelle
+(deja prevu dans TEMP_STYLES, rien a changer cote JS).
+
+Coherence physique inter-T (verifiee par utilisateur) : T15K se positionne
+bien entre T5K et T50K aux memes points temporels, comme attendu thermiquement.
+
+T35K : ligne deja preparee, en attente du tableau_filled_T35K.xlsx
+(SP inputs generes, Gaussian + Multiwfn pas encore lances).
