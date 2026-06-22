@@ -32,7 +32,7 @@ TEMPERATURES = [
     ("T5K",  "tableau_filled_T5K.xlsx",     "5"),
     ("T50K", "tableau_filled_v2_T50K.xlsx", "50"),
     ("T15K", "tableau_filled_T15K.xlsx",    "15"),
-    # ("T35K", "tableau_filled_T35K.xlsx",   "35"),
+    ("T35K", "tableau_filled_T35K.xlsx",    "35"),
 ]
 
 
@@ -349,12 +349,14 @@ const MOTIF_COLORS = {
   "A+B (cycles fusionnés)": "#009E73",
 };
 
-// Style de ligne + marker = température (extensible : 4 styles distincts dispo)
+// Style de ligne + marker = température (extensible : 4 styles distincts dispo).
+// Chips palette = Okabe-Ito thermique froid -> chaud (bleu / vert / jaune / vermillon),
+// daltoniens-friendly. Les courbes elles-mêmes restent colorées par MOTIF.
 const TEMP_STYLES = {
-  "T5K":  { chip: "#00B4D8", dash: "solid",   marker: "circle",     short: "5 K"  },
-  "T50K": { chip: "#E63946", dash: "dash",    marker: "square",     short: "50 K" },
-  "T15K": { chip: "#52B788", dash: "dot",     marker: "diamond",    short: "15 K" },
-  "T35K": { chip: "#9D4EDD", dash: "dashdot", marker: "triangle-up", short: "35 K" },
+  "T5K":  { chip: "#0072B2", dash: "solid",   marker: "circle",      short: "5 K"  },
+  "T15K": { chip: "#009E73", dash: "dot",     marker: "diamond",     short: "15 K" },
+  "T35K": { chip: "#E69F00", dash: "dashdot", marker: "triangle-up", short: "35 K" },
+  "T50K": { chip: "#D55E00", dash: "dash",    marker: "square",      short: "50 K" },
 };
 
 const DESCRIPTORS = [
